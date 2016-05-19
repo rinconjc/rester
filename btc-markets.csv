@@ -1,0 +1,3 @@
+Test Suite,Test Name,Target Path,HTTP VERB,HEADERS,PAYLOAD,PARAMS,EXPECTED STATUS,EXPECTED BODY,EXPECTED HEADERS
+Market data,Invalid path,/market/BTX/AUD/tick,GET,,,,400,,
+,Valid path,/market/BTC/AUD/tick,GET,,,,200,"{currency:""AUD"", instrument:""BTC""}",
