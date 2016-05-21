@@ -48,35 +48,41 @@
                    :body payload}))
 
 (defn verify-response [{:keys [status body headers] :as resp}
-                       {:keys[exp-status exp-headers exp-body]}]
-
-  (let [body* (json->clj body)]
-    (or
-     (and (not= status exp-status)
-          (str "status " status " not equal to expected " exp-status))
-     (some #(fn [[header value]]
-              (if (not= value (headers header))
-                (str "header " header " was " (headers header) " expected " value))) exp-headers)
-     (if-let [diff (and (not-empty exp-body) (first (data/diff exp-body body*)))]
-       (->> diff json/generate-string (str "expected body missing:" ))))))
+                       {:keys [exp-status exp-headers exp-body]}]
+  (let [body* (json->clj body)
+        error (or
+               (and (not= status exp-status)
+                    (str "status " status " not equal to expected " exp-status))
+               (some #(fn [[header value]]
+                        (if (not= value (headers header))
+                          (str "header " header " was " (headers header) " expected " value))) exp-headers)
+               (if-let [diff (and (not-empty exp-body) (first (data/diff exp-body body*)))]
+                 (->> diff json/generate-string (str "expected body missing:" ))))]
+    (if error [error resp])))
 
 (defn test-all [base-url suites]
-  (for [{:keys[suite tests]} suites]
+  (for [{:keys[suite tests]} suites
+        :let [results (doall (map #(future [(% :test)
+                                            (verify-response (mk-request base-url %) %)]) tests))]]
     {:suite suite
-     :results (map #(vector (% :test)
-                            (or (verify-response (mk-request base-url %) %) :OK)) tests)}))
+     :results results
+     :total (count results)
+     :failures (count (filter #(second @%) results))}))
 
 (defn print-test-results [suites]
-  (println "=============================================================")
-  (doseq [{:keys [suite results]} suites]
-    (println suite)
-    (doseq [[test result] results]
-      (print "...")
-      (print test (apply str (repeat (- 20 (count test)) ".")))
-      (println result))))
+  (let [total (reduce + (map :total suites))
+        fail-count (reduce + (map :failures suites))]
+    (println "=============================================================")
+    (println "Test cases:" total ", failed:" fail-count)
+    (doseq [{:keys [suite results]} suites]
+      (println suite)
+      (doseq [result results :let [[test result] @result]]
+        (print (if result "\u001B[31m [x] " "\u001B[32m [v] "))
+        (println test "\t" (or (first result) :OK))))
+    (print "\u001B[0m")))
 
 (defn -main
   "Give me a CSV with API rest cases and I will verify them"
   [& args]
-  (print-test-results
-   (doall (test-all (first args) (tests-from (second args))))))
+  (print-test-results (test-all (first args) (tests-from (second args))))
+  (shutdown-agents))
