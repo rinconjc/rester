@@ -1,6 +1,6 @@
 # rester
 
-FIXME: description
+Spreadsheet (CSV) driven Restful API test runner
 
 ## Installation
 
@@ -8,9 +8,13 @@ Download from http://example.com/FIXME.
 
 ## Usage
 
-FIXME: explanation
+Create your tests suites in a CSV File [like this](btc-markets.csv)
+Run the script with:
 
-    $ java -jar rester-0.1.0-standalone.jar [args]
+    $ lein run -m rester.core <base-url-rest-server> <path to your csv file>
+or
+
+    $ java -jar rester-0.1.0-standalone.jar <base-url-rest-server> <path to your csv file>
 
 ## Options
 
