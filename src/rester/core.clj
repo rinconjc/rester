@@ -41,11 +41,14 @@
 
 (defn mk-request [base-url {:keys[test path verb headers params payload]}]
   (log/info "executing" test ": " verb " " path)
-  (client/request {:url (str base-url path)
-                   :method (keyword (str/lower-case verb))
-                   :headers headers
-                   :query-params params
-                   :body payload}))
+  (try
+    (client/request {:url (str base-url path)
+                    :method (keyword (str/lower-case verb))
+                    :headers headers
+                    :query-params params
+                     :body payload})
+    (catch Exception e
+      (log/error "exception in request: " verb " " path))))
 
 (defn verify-response [{:keys [status body headers] :as resp}
                        {:keys [exp-status exp-headers exp-body]}]
@@ -76,10 +79,9 @@
     (println "Test cases:" total ", failed:" fail-count)
     (doseq [{:keys [suite results]} suites]
       (println suite)
-      (doseq [result results :let [[test result] @result]]
+      (doseq [result results :let [[test result] @result]][]
         (print (if result "\u001B[31m [x] " "\u001B[32m [v] "))
-        (println test "\t" (or (first result) :OK))))
-    (print "\u001B[0m")))
+        (println test "\t" (or (first result) :OK) "\u001B[0m")))))
 
 (defn -main
   "Give me a CSV with API rest cases and I will verify them"
