@@ -13,7 +13,7 @@
   (:import clojure.lang.ExceptionInfo))
 
 (defn- replace-opts [s opts]
-  (str/replace s #"\$(\w+)\$" #(opts (second %))))
+  (str/replace s #"\$(\w+)\$" #(or (opts (second %)) (log/error "missing argument:" (second %)))))
 
 (defn- json->clj [json-str]
   (if-not (str/blank? json-str)
@@ -54,14 +54,15 @@
                      :content-type :json
                      :headers headers
                      :query-params params
-                     :debug true
+                     ;; :debug true
                      :form-params payload})
     (catch ExceptionInfo e
       (.getData e))))
 
 (defn verify-response [{:keys [status body headers] :as resp}
                        {:keys [exp-status exp-headers exp-body]}]
-  (let [body* (case (:Content-Type headers) "application/json" (json->clj body) body)
+  (let [body* (condp re-find (:Content-Type headers)
+                #"application/json" (json->clj body) body)
         error (or
                (and (not= status exp-status)
                     (str "status " status " not equal to expected " exp-status))
