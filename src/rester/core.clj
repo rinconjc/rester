@@ -67,11 +67,13 @@
                (and (not= status exp-status)
                     (str "status " status " not equal to expected " exp-status))
                (some (fn [[header value]]
-                        (if (not= value (headers header))
-                          (str "header " header " was " (headers header) " expected " value))) exp-headers)
-               (if-let [diff (and (not-empty exp-body) (first (data/diff exp-body body*)))]
+                       (if (not= value (headers header))
+                         (str "header " header " was " (headers header) " expected " value))) exp-headers)
+               (when-let [diff (and (not-empty exp-body) (first (data/diff exp-body body*)))]
+                 (log/error "response payload doesn't contain expected:" exp-body " full response was:" body)
                  (->> diff json/generate-string (str "expected body missing:" ))))]
-    (if error [error resp])))
+    (if error
+      [error resp])))
 
 (defn test-all [suites]
   (for [{:keys[suite tests]} suites
@@ -90,8 +92,8 @@
     (doseq [{:keys [suite results]} suites]
       (println suite)
       (doseq [result results :let [[test result] @result]][]
-        (print (if result "\u001B[31m [x] " "\u001B[32m [v] "))
-        (println test "\t" (or (first result) :OK) "\u001B[0m")))))
+             (print (if result "\u001B[31m [x] " "\u001B[32m [v] "))
+             (println test "\t" (or (first result) :OK) "\u001B[0m")))))
 
 (defn -main
   "Give me a CSV with API rest cases and I will verify them"
