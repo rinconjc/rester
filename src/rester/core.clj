@@ -23,11 +23,14 @@
       (json/parse-string json-str))))
 
 (defn- str->map
-  ([s sep] (str->map s sep {}))
-  ([s sep opts]
+  ([s sep] (str->map s sep {} false))
+  ([s sep opts include-empty]
    (if-not (str/blank? s)
-     (->> (str/split s #"\s*,\s*") (map #(let [[k v] (str/split % sep 2)]
-                                           [k (replace-opts v opts)])) (into {})))))
+     (->> (str/split s #"\s*,\s*")
+          (map #(let [[k v] (str/split % sep 2)] [k (replace-opts v opts)]))
+          (filter #(or include-empty (not (str/blank? (second %)))))
+          (into {})))))
+
 (defn diff* [a b]
   (cond
     (= a b) nil
@@ -36,9 +39,9 @@
                  (if (empty? d) nil (into {} d)))
                a)
     (coll? a) (if (coll? b)
-                  (let [e (filter (fn [x] (every? #(diff* x %) b)) a)]
-                    (if (empty? e) nil (vec e)))
-                  a)
+                (let [e (filter (fn [x] (every? #(diff* x %) b)) a)]
+                  (if (empty? e) nil (vec e)))
+                a)
     (string? a) (and (= \# (first a)) (not (re-matches (re-pattern (subs a 1)) (str b)))
                      a)
     :else a))
@@ -46,14 +49,19 @@
 (defn load-tests-from [file opts]
   (with-open [in-file (io/reader file)]
     (reduce
-     (fn [suites [suite test url verb headers payload params exp-status exp-body exp-headers]]
-       (let [test-case {:test test :url (replace-opts url opts) :verb verb
-                        :headers (str->map headers #":" opts)
-                        :params (str->map params #"\s*=\s*" opts)
-                        :payload (json->clj payload)
+     (fn [suites [suite test url verb headers payload params exp-status exp-body exp-headers options]]
+       (let [options (into #{} (for [opt (str/split options #"\s*,\s*")] (keyword (str/lower-case opt))))
+             exp-headers (str->map exp-headers #":")
+             exp-body (try (json->clj exp-body)
+                           (catch Exception e
+                             (log/error "failed parsing exp-body as json") exp-body))
+             test-case {:test test :url (replace-opts url opts) :verb verb
+                        :headers (str->map headers #":" opts false)
+                        :params (str->map params #"\s*=\s*" opts true)
+                        :payload (if (:dont_parse_payload options) payload (json->clj payload))
                         :exp-status (Integer/parseInt exp-status)
-                        :exp-body (json->clj exp-body)
-                        :exp-headers (str->map exp-headers #":")}]
+                        :exp-body exp-body
+                        :exp-headers exp-headers}]
          (if-not (str/blank? suite)
            (conj suites {:suite suite
                          :tests [test-case]})
@@ -69,8 +77,8 @@
                      :content-type :json
                      :headers headers
                      :query-params params
-                     ;; :debug true
-                     :form-params payload})
+                     :body (if (string? payload) payload
+                               (and (seq payload) (json/generate-string payload)))})
     (catch ExceptionInfo e
       (.getData e))))
 
@@ -92,12 +100,12 @@
 
 (defn test-all [suites]
   (-> (for [{:keys[suite tests]} suites
-         :let [results (doall (map #(future [(% :test)
-                                             (verify-response (mk-request %) %)]) tests))]]
-     {:suite suite
-      :results results
-      :count (count results)
-      :failures (count (filter #(second @%) results))})
+            :let [results (doall (map #(future [(% :test)
+                                                (verify-response (mk-request %) %)]) tests))]]
+        {:suite suite
+         :results results
+         :count (count results)
+         :failures (count (filter #(second @%) results))})
       (#(hash-map :suites %
                   :total (reduce + (map :count %))
                   :total-failures (reduce + (map :failures %))))))
