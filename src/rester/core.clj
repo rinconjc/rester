@@ -28,14 +28,14 @@
    (if-not (str/blank? s)
      (->> (str/split s #"\s*,\s*") (map #(let [[k v] (str/split % sep 2)]
                                            [k (replace-opts v opts)])) (into {})))))
-(defn- diff* [a b]
+(defn diff* [a b]
   (cond
     (= a b) nil
     (map? a) (if (map? b)
                (let [d (filter #(diff* (second %) (b (first %))) a)]
                  (if (empty? d) nil (into {} d)))
                a)
-    (vector? a) (if (vector? b)
+    (coll? a) (if (coll? b)
                   (let [e (filter (fn [x] (every? #(diff* x %) b)) a)]
                     (if (empty? e) nil (vec e)))
                   a)
@@ -84,7 +84,8 @@
                (some (fn [[header value]]
                        (if (not= value (headers header))
                          (str "header " header " was " (headers header) " expected " value))) exp-headers)
-               (if-let [diff (and (not-empty exp-body) (first (diff* exp-body body*)))]
+               (when-let [diff (and (not-empty exp-body) (first (diff* exp-body body*)))]
+                 (log/error "failed matching body. expected:" exp-body " got:" body*)
                  (->> diff json/generate-string (str "expected body missing:" ))))]
     (if error
       [error resp])))
