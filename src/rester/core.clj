@@ -78,7 +78,8 @@
                      :headers headers
                      :query-params params
                      :body (if (string? payload) payload
-                               (and (seq payload) (json/generate-string payload)))})
+                               (and (seq payload) (json/generate-string payload)))
+                     :insecure? true})
     (catch ExceptionInfo e
       (.getData e))))
 
