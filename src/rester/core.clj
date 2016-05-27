@@ -42,8 +42,8 @@
                 (let [e (filter (fn [x] (every? #(diff* x %) b)) a)]
                   (if (empty? e) nil (vec e)))
                 a)
-    (string? a) (and (= \# (first a)) (not (re-matches (re-pattern (subs a 1)) (str b)))
-                     a)
+    (string? a) (if (and (= \# (first a)) (re-find (re-pattern (subs a 1)) (str b)))
+                  nil a)
     :else a))
 
 (defn load-tests-from [file opts]
@@ -92,7 +92,7 @@
                (some (fn [[header value]]
                        (if (not= value (headers header))
                          (str "header " header " was " (headers header) " expected " value))) exp-headers)
-               (when-let [diff (and (not-empty exp-body) (first (diff* exp-body body*)))]
+               (when-let [diff (and (not-empty exp-body) (diff* exp-body body*))]
                  (log/error "failed matching body. expected:" exp-body " got:" body*)
                  (->> diff json/generate-string (str "expected body missing:" ))))]
     (if error
