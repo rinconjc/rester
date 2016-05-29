@@ -4,14 +4,15 @@
              [core :as json]
              [factory :as factory]]
             [clj-http.client :as client]
-            [clojure
-             [data :as data]
-             [string :as str]
-             [test :refer [deftest is run-tests testing]]]
-            [clojure.data.csv :as csv]
-            [clojure.java.io :as io]
+            [clojure.data
+             [csv :as csv]
+             [xml :refer [emit sexp-as-element]]]
+            [clojure.java.io :as io :refer [make-parents writer]]
+            [clojure.string :as str]
             [clojure.tools.logging :as log])
   (:import clojure.lang.ExceptionInfo))
+
+(declare junit-reports)
 
 (defn- replace-opts [s opts]
   (str/replace s #"\$(\w+)\$" #(or (opts (second %)) (log/error "missing argument:" (second %)))))
@@ -71,17 +72,17 @@
 
 (defn mk-request [{:keys[test url verb headers params payload]}]
   (log/info "executing" test ": " verb " " url)
-  (try
-    (client/request {:url url
-                     :method (keyword (str/lower-case verb))
-                     :content-type :json
-                     :headers headers
-                     :query-params params
-                     :body (if (string? payload) payload
-                               (and (seq payload) (json/generate-string payload)))
-                     :insecure? true})
-    (catch ExceptionInfo e
-      (.getData e))))
+  (time (try
+     (client/request {:url url
+                      :method (keyword (str/lower-case verb))
+                      :content-type :json
+                      :headers headers
+                      :query-params params
+                      :body (if (string? payload) payload
+                                (and (seq payload) (json/generate-string payload)))
+                      :insecure? true})
+     (catch ExceptionInfo e
+       (.getData e)))))
 
 (defn verify-response [{:keys [status body headers] :as resp}
                        {:keys [exp-status exp-headers exp-body]}]
@@ -121,14 +122,27 @@
            (print (if result "\u001B[31m [x] " "\u001B[32m [v] "))
            (println test "\t" (or (first result) :OK) "\u001B[0m"))))
 
+(defn junit-report [dest-file {:keys[suites total total-failures]}]
+  (make-parents dest-file)
+  (with-open [out (writer dest-file)]
+    (emit (sexp-as-element
+          [:testsuites
+           (for [{:keys [suite results count failures]} suites]
+             [:testsuite {:name suite :errors 0 :tests count :failures failures}
+              (for [r results :let [[test result] @r]]
+                [:testcase {:name test :time 0}
+                 (if result [:failure {:message (first result)} (second result)])])])])
+          out)))
+
 (defn -main
   "Give me a CSV with API rest cases and I will verify them"
   [& args]
   (let [opts (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) (rest args)))
         _ (println "running with arguments:" opts)
+        xml-report (str "target/" (str/replace (first args) #"\.csv" "-results.xml"))
         results (test-all (load-tests-from (first args) opts))]
     (try
-      (print-test-results results)
+      ((juxt #(junit-report xml-report %) print-test-results) results)
       (System/exit (:total-failures results))
       (finally
         (shutdown-agents)))))

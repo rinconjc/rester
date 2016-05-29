@@ -4,4 +4,4 @@ Market data,Invalid path,$baseUrl$/marketx/BTC/AUD/tick,GET,,,,404,,,
 Fake API,Create post,$fakeServer$/posts,POST,Content-Type:application/json,"{userId:10, title:""title1"", body:""test post 1""}",,201,"{title:""title1"", body:""test post 1""}",Content-Type:application/json; charset=utf-8,
 ,Updated post,$fakeServer$/posts/1,PUT,Content-Type:application/json,"{title:""foo"", body:""bar"", userId:""7""}",,200,"{id:1,title:""foo"", body:""bar""}",Content-Type:application/json; charset=utf-8,
 ,Delete post,$fakeServer$/posts/1,DELETE,Content-Type:application/json,,,200,,Content-Type:application/json; charset=utf-8,
-,Updated post,$fakeServer$/posts,POST,Content-Type:application/json,"{title:""foo"", body:""bar"", userId:""7""}",,500,#SyntaxError,Content-Type:text/html; charset=utf-8,DONT_PARSE_PAYLOAD
+,Updated post,$fakeServer$/posts,POST,Content-Type:application/json,"{title:""foo"", body:""bar"", userId:""7""}",,500,#SyntaxErrorx,Content-Type:text/html; charset=utf-8,DONT_PARSE_PAYLOAD

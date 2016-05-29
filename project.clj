@@ -8,7 +8,8 @@
                  [clj-http "2.2.0"]
                  [org.clojure/tools.logging "0.3.1"]
                  [org.clojure/data.json "0.2.6"]
-                 [cheshire "5.6.1"]]
+                 [cheshire "5.6.1"]
+                 [org.clojure/data.xml "0.0.8"]]
   :main ^:skip-aot rester.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}})
