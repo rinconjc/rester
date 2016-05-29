@@ -137,12 +137,12 @@
 (defn -main
   "Give me a CSV with API rest cases and I will verify them"
   [& args]
-  (let [opts (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) (rest args)))
-        _ (println "running with arguments:" opts)
-        xml-report (str "target/" (str/replace (first args) #"\.csv" "-results.xml"))
-        results (test-all (load-tests-from (first args) opts))]
-    (try
+  (try
+    (let [opts (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) (rest args)))
+          _ (println "running with arguments:" opts)
+          xml-report (str "target/" (str/replace (first args) #"\.csv" "-results.xml"))
+          results (test-all (load-tests-from (first args) opts))]
       ((juxt #(junit-report xml-report %) print-test-results) results)
-      (System/exit (:total-failures results))
-      (finally
-        (shutdown-agents)))))
+      (System/exit (:total-failures results)))
+    (finally
+      (shutdown-agents))))
