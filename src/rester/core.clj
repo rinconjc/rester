@@ -140,7 +140,8 @@
   (try
     (let [opts (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) (rest args)))
           _ (println "running with arguments:" opts)
-          xml-report (str "target/" (str/replace (first args) #"\.csv" "-results.xml"))
+          xml-report (or (opts "report")
+                         (str "target/" (str/replace (first args) #"\.csv" "-results.xml")))
           results (test-all (load-tests-from (first args) opts))]
       ((juxt #(junit-report xml-report %) print-test-results) results)
       (System/exit (:total-failures results)))
