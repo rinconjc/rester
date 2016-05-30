@@ -6,13 +6,12 @@
             [clj-http.client :as client]
             [clojure.data
              [csv :as csv]
-             [xml :refer [emit sexp-as-element]]]
+             [xml :refer [emit emit-str parse-str sexp-as-element]]]
             [clojure.java.io :as io :refer [make-parents writer]]
             [clojure.string :as str]
             [clojure.tools.logging :as log])
-  (:import clojure.lang.ExceptionInfo))
-
-(declare junit-reports)
+  (:import clojure.data.xml.Element
+           clojure.lang.ExceptionInfo))
 
 (defn- replace-opts [s opts]
   (str/replace s #"\$(\w+)\$" #(or (opts (second %)) (log/error "missing argument:" (second %)))))
@@ -45,6 +44,10 @@
                 a)
     (string? a) (if (and (= \# (first a)) (re-find (re-pattern (subs a 1)) (str b)))
                   nil a)
+    (and (instance? Element a) (instance? b)) (or (if (not= (:tag a) (:tag b)) a)
+                                                  (diff* (:attrs a) (:attrs b))
+                                                  (diff* (:content a) (:content b)))
+
     :else a))
 
 (defn load-tests-from [file opts]
@@ -53,9 +56,13 @@
      (fn [suites [suite test url verb headers payload params exp-status exp-body exp-headers options]]
        (let [options (into #{} (for [opt (str/split options #"\s*,\s*")] (keyword (str/lower-case opt))))
              exp-headers (str->map exp-headers #":")
-             exp-body (try (json->clj exp-body)
-                           (catch Exception e
-                             (log/error "failed parsing exp-body as json") exp-body))
+             exp-body (if (str/blank? exp-body)
+                        (try (condp re-find (or (exp-headers "Content-Type") "")
+                               #"xml" (parse-str exp-body)
+                               #"json" (json->clj exp-body)
+                               exp-body)
+                             (catch Exception e
+                               (log/error "failed parsing exp-body") exp-body)))
              test-case {:test test :url (replace-opts url opts) :verb verb
                         :headers (str->map headers #":" opts false)
                         :params (str->map params #"\s*=\s*" opts true)
@@ -86,8 +93,10 @@
 
 (defn verify-response [{:keys [status body headers] :as resp}
                        {:keys [exp-status exp-headers exp-body]}]
-  (let [body* (condp re-find (:Content-Type headers)
-                #"application/json" (json->clj body) body)
+  (let [body* (condp re-find (or (:Content-Type headers) "")
+                #"application/json" (json->clj body)
+                #"xml" (parse-str body)
+                body)
         error (or
                (and (not= status exp-status)
                     (str "status " status " not equal to expected " exp-status))
@@ -96,7 +105,10 @@
                          (str "header " header " was " (headers header) " expected " value))) exp-headers)
                (when-let [diff (and (not-empty exp-body) (diff* exp-body body*))]
                  (log/error "failed matching body. expected:" exp-body " got:" body*)
-                 (->> diff json/generate-string (str "expected body missing:" ))))]
+                 (->> diff (#(if (instance? Element %)
+                               (emit-str %)
+                               (json/generate-string %)))
+                      (str "expected body missing:" ))))]
     (if error
       [error resp])))
 
@@ -126,12 +138,12 @@
   (make-parents dest-file)
   (with-open [out (writer dest-file)]
     (emit (sexp-as-element
-          [:testsuites
-           (for [{:keys [suite results count failures]} suites]
-             [:testsuite {:name suite :errors 0 :tests count :failures failures}
-              (for [r results :let [[test result] @r]]
-                [:testcase {:name test :time 0}
-                 (if result [:failure {:message (first result)} (second result)])])])])
+           [:testsuites
+            (for [{:keys [suite results count failures]} suites]
+              [:testsuite {:name suite :errors 0 :tests count :failures failures}
+               (for [r results :let [[test result] @r]]
+                 [:testcase {:name test :time 0}
+                  (if result [:failure {:message (first result)} (second result)])])])])
           out)))
 
 (defn -main
