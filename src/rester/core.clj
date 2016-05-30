@@ -75,7 +75,7 @@
   (time (try
      (client/request {:url url
                       :method (keyword (str/lower-case verb))
-                      :content-type :json
+                      ;; :content-type :json
                       :headers headers
                       :query-params params
                       :body (if (string? payload) payload
