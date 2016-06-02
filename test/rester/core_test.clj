@@ -1,7 +1,22 @@
 (ns rester.core-test
-  (:require [clojure.test :refer :all]
+  (:require [clojure.data.xml :refer [sexp-as-element]]
+            [clojure.test :refer :all]
             [rester.core :refer :all]))
 
-(deftest a-test
-  (testing "FIXME, I fail."
-    (is (= 0 1))))
+(deftest diff-test
+  (testing "diff scalars"
+    (is (= 1 (diff* 1 4)))
+    (is (= "a" (diff* "a" "b")))
+    (is (nil? (diff* "a" "a")))
+    (is (nil? (diff* 4 4))))
+
+  (testing "diff maps"
+    (is (= {:a "b"} (diff* {:a "b" :c "d"} {:a "x" :c "d"})))
+    (is (= {:a "b"} (diff* {:a "b" :c "d"} {:a "x" :c "d"})))
+    (is (= {"a" ["b"]} (diff* {"a" ["b"] "c" ["e"]} {"c" ["d" "e"] "a" ["g"]})))
+    (is (nil? (diff* {"a" "b" "c" "d"} {"c" "d" "a" "b"})))
+    (is (= "{\"name\" \"abc\"}" (diff* "{\"name\" \"abc\"}" {"name" "abc"}))))
+
+  (testing "diff xmls"
+    (is (nil? (diff* (sexp-as-element [:a {:name "abc" :other "10"} [:b [:c]] [:d]])
+                     (sexp-as-element [:a {:name "abc" :other "10" :more "zzz"} [:x] [:b [:c]] [:d]]))))))
