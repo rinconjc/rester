@@ -9,7 +9,8 @@
              [xml :refer [emit emit-str parse-str sexp-as-element]]]
             [clojure.java.io :as io :refer [make-parents writer]]
             [clojure.string :as str]
-            [clojure.tools.logging :as log])
+            [clojure.tools.logging :as log]
+            [clojure.data.xml :refer [indent]])
   (:import clojure.data.xml.Element
            clojure.lang.ExceptionInfo))
 
@@ -34,6 +35,9 @@
 (defn diff* [a b]
   (cond
     (= a b) nil
+    (and (instance? Element a) (instance? Element b)) (or (if (not= (:tag a) (:tag b)) a)
+                                                          (diff* (:attrs a) (:attrs b))
+                                                          (diff* (:content a) (:content b)))
     (map? a) (if (map? b)
                (let [d (filter #(diff* (second %) (b (first %))) a)]
                  (if (empty? d) nil (into {} d)))
@@ -44,9 +48,6 @@
                 a)
     (string? a) (if (and (= \# (first a)) (re-find (re-pattern (subs a 1)) (str b)))
                   nil a)
-    (and (instance? Element a) (instance? b)) (or (if (not= (:tag a) (:tag b)) a)
-                                                  (diff* (:attrs a) (:attrs b))
-                                                  (diff* (:content a) (:content b)))
 
     :else a))
 
@@ -59,8 +60,7 @@
              exp-body (if (str/blank? exp-body)
                         (try (condp re-find (or (exp-headers "Content-Type") "")
                                #"xml" (parse-str exp-body)
-                               #"json" (json->clj exp-body)
-                               exp-body)
+                               (json->clj exp-body))
                              (catch Exception e
                                (log/error "failed parsing exp-body") exp-body)))
              test-case {:test test :url (replace-opts url opts) :verb verb
@@ -94,7 +94,7 @@
 (defn verify-response [{:keys [status body headers] :as resp}
                        {:keys [exp-status exp-headers exp-body]}]
   (let [body* (condp re-find (or (:Content-Type headers) "")
-                #"application/json" (json->clj body)
+                #"json" (json->clj body)
                 #"xml" (parse-str body)
                 body)
         error (or
@@ -137,14 +137,14 @@
 (defn junit-report [dest-file {:keys[suites total total-failures]}]
   (make-parents dest-file)
   (with-open [out (writer dest-file)]
-    (emit (sexp-as-element
-           [:testsuites
-            (for [{:keys [suite results count failures]} suites]
-              [:testsuite {:name suite :errors 0 :tests count :failures failures}
-               (for [r results :let [[test result] @r]]
-                 [:testcase {:name test :time 0}
-                  (if result [:failure {:message (first result)} (second result)])])])])
-          out)))
+    (indent (sexp-as-element
+             [:testsuites
+              (for [{:keys [suite results count failures]} suites]
+                [:testsuite {:name suite :errors 0 :tests count :failures failures}
+                 (for [r results :let [[test result] @r]]
+                   [:testcase {:name test :time 0}
+                    (if result [:failure {:message (first result)} (second result)])])])])
+            out)))
 
 (defn -main
   "Give me a CSV with API rest cases and I will verify them"
