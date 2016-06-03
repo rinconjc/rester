@@ -33,23 +33,25 @@
           (into {})))))
 
 (defn diff* [a b]
-  (cond
-    (= a b) nil
-    (and (instance? Element a) (instance? Element b)) (or (if (not= (:tag a) (:tag b)) a)
-                                                          (diff* (:attrs a) (:attrs b))
-                                                          (diff* (:content a) (:content b)))
-    (map? a) (if (map? b)
-               (let [d (filter #(diff* (second %) (b (first %))) a)]
-                 (if (empty? d) nil (into {} d)))
-               a)
-    (coll? a) (if (coll? b)
-                (let [e (filter (fn [x] (every? #(diff* x %) b)) a)]
-                  (if (empty? e) nil (vec e)))
-                a)
-    (string? a) (if (and (= \# (first a)) (re-find (re-pattern (subs a 1)) (str b)))
-                  nil a)
+  (let [ldiff (cond
+                (or (and (string? a) (str/blank? a)) (= a b)) nil
+                (and (instance? Element a) (instance? Element b)) (or (if (not= (:tag a) (:tag b)) a)
+                                                                      (diff* (:attrs a) (:attrs b))
+                                                                      (diff* (:content a) (:content b)))
+                (map? a) (if (map? b)
+                           (let [d (filter #(diff* (second %) (b (first %))) a)]
+                             (if (empty? d) nil (into {} d)))
+                           a)
+                (coll? a) (if (coll? b)
+                            (let [e (filter (fn [x] (every? #(diff* x %) b)) a)]
+                              (if (empty? e) nil (vec e)))
+                            a)
+                (string? a) (if (and (= \# (first a)) (re-find (re-pattern (subs a 1)) (str b)))
+                              nil a)
 
-    :else a))
+                :else a)]
+    (log/debug "diff..." a b " is " ldiff)
+    ldiff))
 
 (defn load-tests-from [file opts]
   (with-open [in-file (io/reader file)]
@@ -57,12 +59,12 @@
      (fn [suites [suite test url verb headers payload params exp-status exp-body exp-headers options]]
        (let [options (into #{} (for [opt (str/split options #"\s*,\s*")] (keyword (str/lower-case opt))))
              exp-headers (str->map exp-headers #":")
-             exp-body (if (str/blank? exp-body)
-                        (try (condp re-find (or (exp-headers "Content-Type") "")
+             exp-body (if-not (str/blank? exp-body)
+                        (try (condp re-find (or (get exp-headers "Content-Type") "")
                                #"xml" (parse-str exp-body)
                                (json->clj exp-body))
                              (catch Exception e
-                               (log/error "failed parsing exp-body") exp-body)))
+                               (log/error "failed parsing exp-body" e) exp-body)))
              test-case {:test test :url (replace-opts url opts) :verb verb
                         :headers (str->map headers #":" opts false)
                         :params (str->map params #"\s*=\s*" opts true)
@@ -80,16 +82,16 @@
 (defn mk-request [{:keys[test url verb headers params payload]}]
   (log/info "executing" test ": " verb " " url)
   (time (try
-     (client/request {:url url
-                      :method (keyword (str/lower-case verb))
-                      ;; :content-type :json
-                      :headers headers
-                      :query-params params
-                      :body (if (string? payload) payload
-                                (and (seq payload) (json/generate-string payload)))
-                      :insecure? true})
-     (catch ExceptionInfo e
-       (.getData e)))))
+          (client/request {:url url
+                           :method (keyword (str/lower-case verb))
+                           ;; :content-type :json
+                           :headers headers
+                           :query-params params
+                           :body (if (string? payload) payload
+                                     (and (seq payload) (json/generate-string payload)))
+                           :insecure? true})
+          (catch ExceptionInfo e
+            (.getData e)))))
 
 (defn verify-response [{:keys [status body headers] :as resp}
                        {:keys [exp-status exp-headers exp-body]}]
@@ -103,11 +105,11 @@
                (some (fn [[header value]]
                        (if (not= value (headers header))
                          (str "header " header " was " (headers header) " expected " value))) exp-headers)
-               (when-let [diff (and (not-empty exp-body) (diff* exp-body body*))]
+               (when-let [ldiff (diff* exp-body body*)]
                  (log/error "failed matching body. expected:" exp-body " got:" body*)
-                 (->> diff (#(if (instance? Element %)
-                               (emit-str %)
-                               (json/generate-string %)))
+                 (->> ldiff (#(if (instance? Element %)
+                                (emit-str %)
+                                (json/generate-string %)))
                       (str "expected body missing:" ))))]
     (if error
       [error resp])))
