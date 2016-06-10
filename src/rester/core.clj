@@ -4,15 +4,17 @@
              [core :as json]
              [factory :as factory]]
             [clj-http.client :as client]
+            [clojure
+             [core :refer [set-agent-send-executor!]]
+             [string :as str]]
             [clojure.data
              [csv :as csv]
-             [xml :refer [emit emit-str parse-str sexp-as-element]]]
+             [xml :refer [emit-str indent parse-str sexp-as-element]]]
             [clojure.java.io :as io :refer [make-parents writer]]
-            [clojure.string :as str]
-            [clojure.tools.logging :as log]
-            [clojure.data.xml :refer [indent]])
+            [clojure.tools.logging :as log])
   (:import clojure.data.xml.Element
-           clojure.lang.ExceptionInfo))
+           clojure.lang.ExceptionInfo
+           java.util.concurrent.Executors))
 
 (defn- replace-opts [s opts]
   (str/replace s #"\$(\w+)\$" #(or (opts (second %)) (log/error "missing argument:" (second %)))))
@@ -151,6 +153,7 @@
 (defn -main
   "Give me a CSV with API rest cases and I will verify them"
   [& args]
+  (set-agent-send-executor! (Executors/newFixedThreadPool (or (System/getProperty "parallel-size") 4)))
   (try
     (let [opts (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) (rest args)))
           _ (println "running with arguments:" opts)
