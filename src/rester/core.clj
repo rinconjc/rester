@@ -12,12 +12,13 @@
              [xml :refer [emit-str indent parse-str sexp-as-element]]]
             [clojure.java.io :as io :refer [make-parents writer]]
             [clojure.tools.logging :as log])
-  (:import clojure.data.xml.Element
+  (:import [clojure.data.xml CData Element]
            clojure.lang.ExceptionInfo
            java.util.concurrent.Executors))
 
 (defn- replace-opts [s opts]
-  (str/replace s #"\$(\w+)\$" #(or (opts (second %)) (log/error "missing argument:" (second %)))))
+  (if s
+    (str/replace s #"\$(\w+)\$" #(or (opts (second %)) (log/error "missing argument:" (second %))))))
 
 (defn- json->clj [json-str]
   (if-not (str/blank? json-str)
@@ -25,18 +26,21 @@
                                       {:allow-unquoted-field-names true})]
       (json/parse-string json-str))))
 
-(defn- str->map
+(defn str->map
   ([s sep] (str->map s sep {} false))
   ([s sep opts include-empty]
    (if-not (str/blank? s)
      (->> (str/split s #"\s*,\s*")
-          (map #(let [[k v] (str/split % sep 2)] [k (replace-opts v opts)]))
+          (map #(let [[k v] (str/split % sep 2)
+                      v (or v (log/warn "missing key or value in " k))]
+                  [k (replace-opts v opts)]))
           (filter #(or include-empty (not (str/blank? (second %)))))
           (into {})))))
 
 (defn diff* [a b]
   (let [ldiff (cond
                 (or (and (string? a) (str/blank? a)) (= a b)) nil
+                (and (instance? CData a) (instance? CData b)) (diff* (:content a) (:content b))
                 (and (instance? Element a) (instance? Element b)) (or (if (not= (:tag a) (:tag b)) a)
                                                                       (diff* (:attrs a) (:attrs b))
                                                                       (diff* (:content a) (:content b)))
@@ -48,9 +52,12 @@
                             (let [e (filter (fn [x] (every? #(diff* x %) b)) a)]
                               (if (empty? e) nil (vec e)))
                             a)
-                (string? a) (if (and (= \# (first a)) (re-find (re-pattern (subs a 1)) (str b)))
-                              nil a)
-
+                (string? a) (cond
+                              (or (and (string? b) (= (str/trim a) (str/trim b)))
+                                  (and (= \# (first a)) (re-find (re-pattern (subs a 1)) (str b)))) nil
+                              (re-find #"\s*<[^>]+>" a) (try (diff* (parse-str a) (parse-str b))
+                                                             (catch Exception e a))
+                              :else a)
                 :else a)]
     (log/debug "diff..." a b " is " ldiff)
     ldiff))
@@ -151,9 +158,10 @@
             out)))
 
 (defn -main
-  "Give me a CSV with API rest cases and I will verify them"
+  "Given a CSV file with HTTP request, executes the requests are verifies the expected response"
   [& args]
-  (set-agent-send-executor! (Executors/newFixedThreadPool (or (System/getProperty "parallel-size") 4)))
+  (set-agent-send-executor! (Executors/newFixedThreadPool
+                             (or (System/getProperty "thread-pool-size") 4)))
   (try
     (let [opts (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) (rest args)))
           _ (println "running with arguments:" opts)
