@@ -45,7 +45,7 @@
                                                                       (diff* (:attrs a) (:attrs b))
                                                                       (diff* (:content a) (:content b)))
                 (map? a) (if (map? b)
-                           (let [d (filter #(diff* (second %) (b (first %))) a)]
+                           (let [d (filter #(diff* (second %) (get b (first %))) a)]
                              (if (empty? d) nil (into {} d)))
                            a)
                 (coll? a) (if (coll? b)
@@ -106,7 +106,7 @@
                        {:keys [exp-status exp-headers exp-body]}]
   (let [body* (condp re-find (or (:Content-Type headers) "")
                 #"json" (json->clj body)
-                #"xml" (parse-str body)
+                #"xml" (try (parse-str body) (catch Exception e (log/error e "failed parsing xml:" body) body))
                 body)
         error (or
                (and (not= status exp-status)
@@ -160,8 +160,10 @@
 (defn -main
   "Given a CSV file with HTTP request, executes the requests are verifies the expected response"
   [& args]
-  (set-agent-send-executor! (Executors/newFixedThreadPool
-                             (or (System/getProperty "thread-pool-size") 4)))
+  (let [pool-size (Integer/parseInt (or (System/getProperty "thread-pool-size") "4"))]
+    (log/info "thread pool size:" pool-size)
+    (set-agent-send-executor! (Executors/newFixedThreadPool pool-size))
+    (set-agent-send-off-executor! (Executors/newFixedThreadPool pool-size)))
   (try
     (let [opts (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) (rest args)))
           _ (println "running with arguments:" opts)
