@@ -41,3 +41,15 @@
     (is (= {"a" "b" "c" "d"} (str->map "a:b,c : d" #"\s*:\s*"))))
   (testing "with missing values"
     (is (= {"a" "b"} (str->map "c,a:b" #"\s*:\s*")))))
+
+(deftest test-extract-data
+  (testing "simple json path"
+    (is (= {"id" 100} (extract-data {:body {:id 100 "name" "blah"}} {"id" "$.id"})))))
+
+(deftest test-cyclic?
+  (testing "no cycles"
+    (is (nil? (cyclic? {:a [:b :c] :b [:c]} :a)))
+    (is (nil? (cyclic? {:a [:a]} :b))))
+  (testing "cycles"
+    (is (= :a (cyclic? {:a [:a]} :a)))
+    (is (= :b (cyclic? {:a [:b :c] :b [:d] :d [:f] :f [:b]} :a)))))

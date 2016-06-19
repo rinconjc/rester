@@ -6,25 +6,37 @@
             [clj-http.client :as client]
             [clojure
              [core :refer [set-agent-send-executor!]]
+             [set :refer [union]]
              [string :as str]]
             [clojure.data
              [csv :as csv]
              [xml :refer [emit-str indent parse-str sexp-as-element]]]
             [clojure.java.io :as io :refer [make-parents writer]]
-            [clojure.tools.logging :as log])
+            [clojure.tools.logging :as log]
+            [json-path :refer [at-path]])
   (:import [clojure.data.xml CData Element]
            clojure.lang.ExceptionInfo
+           java.lang.Integer
            java.util.concurrent.Executors))
+
+(def ^:const fields [:suite :test :url :verb :headers :payload :params :exp-status :exp-body
+                     :exp-headers :options :extractions])
+
+(def ^:const placeholder-pattern #"\$(\w+)\$")
+
+(defn placeholders [s]
+  (set (map second (re-seq placeholder-pattern s))))
 
 (defn- replace-opts [s opts]
   (if s
-    (str/replace s #"\$(\w+)\$" #(or (opts (second %)) (log/error "missing argument:" (second %))))))
+    (str/replace s placeholder-pattern
+                 #(str (or (opts (second %)) (log/error "missing argument:" (second %)) "")))))
 
 (defn- json->clj [json-str]
   (if-not (str/blank? json-str)
     (binding [factory/*json-factory* (factory/make-json-factory
                                       {:allow-unquoted-field-names true})]
-      (json/parse-string json-str))))
+      (json/parse-string json-str true))))
 
 (defn str->map
   ([s sep] (str->map s sep {} false))
@@ -62,99 +74,175 @@
     (log/debug "diff..." a b " is " ldiff)
     ldiff))
 
-(defn load-tests-from [file opts]
-  (with-open [in-file (io/reader file)]
-    (reduce
-     (fn [suites [suite test url verb headers payload params exp-status exp-body exp-headers options]]
-       (let [options (into #{} (for [opt (str/split options #"\s*,\s*")] (keyword (str/lower-case opt))))
-             exp-headers (str->map exp-headers #":")
-             exp-body (if-not (str/blank? exp-body)
-                        (try (condp re-find (or (get exp-headers "Content-Type") "")
-                               #"xml" (parse-str exp-body)
-                               (json->clj exp-body))
-                             (catch Exception e
-                               (log/error "failed parsing exp-body" e) exp-body)))
-             test-case {:test test :url (replace-opts url opts) :verb verb
-                        :headers (str->map headers #":" opts false)
-                        :params (str->map params #"\s*=\s*" opts true)
-                        :payload (if (:dont_parse_payload options) payload (json->clj payload))
-                        :exp-status (Integer/parseInt exp-status)
-                        :exp-body exp-body
-                        :exp-headers exp-headers}]
-         (if-not (str/blank? suite)
-           (conj suites {:suite suite
-                         :tests [test-case]})
-           (update suites (dec (count suites)) update :tests conj test-case))))
-     []
-     (rest (csv/read-csv in-file)))))
+(defn coerce-response [{:keys [body headers] :as resp}]
+  (assoc resp :body (condp re-find (or (:Content-Type headers) "")
+                      #"json" (json->clj body)
+                      #"xml" (try (parse-str body)
+                                  (catch Exception e (log/error e "failed parsing xml:" body) body))
+                      body)))
 
-(defn mk-request [{:keys[test url verb headers params payload]}]
+(defn mk-request [{:keys[test url verb headers params payload] :as  req}]
   (log/info "executing" test ": " verb " " url)
-  (time (try
-          (client/request {:url url
-                           :method (keyword (str/lower-case verb))
-                           ;; :content-type :json
-                           :headers headers
-                           :query-params params
-                           :body (if (string? payload) payload
-                                     (and (seq payload) (json/generate-string payload)))
-                           :insecure? true})
-          (catch ExceptionInfo e
-            (.getData e)))))
+  (try
+    (-> (client/request {:url url
+                         :method (keyword (str/lower-case verb))
+                         ;; :content-type :json
+                         :headers headers
+                         :query-params params
+                         :body (if (string? payload) payload
+                                   (and (seq payload) (json/generate-string payload)))
+                         :insecure? true})
+        coerce-response)
+    (catch ExceptionInfo e
+      (.getData e))))
+
+(defn extract-data [{:keys [status body headers] :as resp} extractions]
+  (into {} (for [[name path] extractions]
+             (try
+               (let [result (at-path path body)]
+                 (log/info "extracted:" name "=" result)
+                 [name result])
+               (catch Exception e
+                 (log/error e "failed extracting " path))))))
 
 (defn verify-response [{:keys [status body headers] :as resp}
                        {:keys [exp-status exp-headers exp-body]}]
-  (let [body* (condp re-find (or (:Content-Type headers) "")
-                #"json" (json->clj body)
-                #"xml" (try (parse-str body) (catch Exception e (log/error e "failed parsing xml:" body) body))
-                body)
-        error (or
-               (and (not= status exp-status)
-                    (str "status " status " not equal to expected " exp-status))
-               (some (fn [[header value]]
-                       (if (not= value (headers header))
-                         (str "header " header " was " (headers header) " expected " value))) exp-headers)
-               (when-let [ldiff (diff* exp-body body*)]
-                 (log/error "failed matching body. expected:" exp-body " got:" body*)
-                 (->> ldiff (#(if (instance? Element %)
-                                (emit-str %)
-                                (json/generate-string %)))
-                      (str "expected body missing:" ))))]
-    (if error
-      [error resp])))
+  (or
+   (and (not= status exp-status)
+        (str "status " status " not equal to expected " exp-status))
+   (some (fn [[header value]]
+           (if (not= value (headers header))
+             (str "header " header " was " (headers header) " expected " value))) exp-headers)
+   (when-let [ldiff (diff* exp-body body)]
+     (log/error "failed matching body. expected:" exp-body " got:" body)
+     (->> ldiff (#(if (instance? Element %)
+                    (emit-str %)
+                    (json/generate-string %)))
+          (str "expected body missing:" )))))
 
-(defn test-all [suites]
-  (-> (for [{:keys[suite tests]} suites
-            :let [results (doall (map #(future [(% :test)
-                                                (verify-response (mk-request %) %)]) tests))]]
-        {:suite suite
-         :results results
-         :count (count results)
-         :failures (count (filter #(second @%) results))})
-      (#(hash-map :suites %
-                  :total (reduce + (map :count %))
-                  :total-failures (reduce + (map :failures %))))))
+(defn placeholders-of [{:keys[url headers params payload]}]
+  (apply union (map placeholders [url headers params payload])))
 
-(defn print-test-results [{:keys[suites total total-failures]}]
+(defn cyclic?
+  ([deps x] (cyclic? deps x #{}))
+  ([deps x visited]
+   (or (and (visited x) x)
+       (some #(cyclic? deps % (conj visited x)) (deps x)))))
+
+(defn tests-from [file]
+  (let [tests (with-open [in-file (io/reader file)]
+                (->> (map #(zipmap fields %) (doall (rest (csv/read-csv in-file))))
+                     (map-indexed #(-> %2 (assoc :placeholders (placeholders-of %2) :id %1)
+                                       (update :extractions str->map #"\s*=\s*")))))
+        extractors (for [t tests :when (:extractions t)] [(:id t) (map first (:extractions t))])
+        tests (map (fn [{:keys[placeholders] :as test}]
+                     (assoc test :deps (for [[i extractions] extractors
+                                             :when (some placeholders extractions)] i))) tests)
+        tests-with-deps (into {} (filter #(if (:deps %) [(:id %) (:deps %)]) tests))]
+    (map #(if (cyclic? tests-with-deps (:id %)) (assoc % :error "circular dependency") %) tests)))
+
+(defn prepare-test [{:keys[exp-headers exp-body options] :as test} opts]
+  (try
+    (let [options (into #{} (for [opt (str/split options #"\s*,\s*")] (keyword (str/lower-case opt))))
+          exp-headers (str->map exp-headers #":")
+          exp-body (if-not (str/blank? exp-body)
+                     (try (condp re-find (or (get exp-headers "Content-Type") "")
+                            #"xml" (parse-str exp-body)
+                            (json->clj exp-body))
+                          (catch Exception e
+                            (log/error e "failed parsing exp-body") exp-body)))]
+      (-> test (update :url replace-opts opts)
+          (update :headers str->map #":" opts false)
+          (update :params str->map #"\s*=\s*" opts true)
+          (update :payload #(if (:dont_parse_payload options) % (json->clj %)))
+          (update :exp-status #(Integer/parseInt %))
+          (assoc :exp-body exp-body :exp-headers exp-headers)))
+    (catch Exception e
+      (log/error e "error preparing test " (:test test))
+      (assoc test :error (str "error preparing test due to " e)))))
+
+(defn exec-test-case [test opts]
+  (let [test (if (:error test) test (prepare-test test @opts))]
+    (if (:error test) test
+        (let [resp (mk-request test)
+              delta (verify-response resp test)]
+          (if delta
+            (assoc test :failure delta :resp resp)
+            (do
+              (swap! opts merge (extract-data resp (:extractions test)))
+              (assoc test :success true)))))))
+
+(defn exec-tests [tests opts]
+  (let [opts (atom opts)
+        p (promise)
+        count-down (atom (count tests))
+        test-agents (vec (map agent tests))
+        exec-test (fn[test]
+                    (let [deps (map #(nth test-agents %) (:deps test))
+                          test (if (every? (comp :done deref) deps)
+                                 (assoc
+                                  (if (every? (comp :success deref) deps)
+                                    (try (exec-test-case test opts)
+                                         (catch Exception e
+                                           (log/error e "failed executing test")
+                                           (assoc test :done true :error (.getMessage e))))
+                                    (assoc test :skipped "dependents failed"))
+                                  :done true)
+                                 test)]
+                      (if (:done test)
+                        (swap! count-down dec))
+                      test))]
+
+    (add-watch count-down :key (fn [k r o n] (if (zero? n) (deliver p (map deref test-agents)))))
+    (doseq [a test-agents i (:deps @a)]
+      (add-watch (nth test-agents i) :key (fn [k r o n] (send-off a exec-test))))
+    (doseq [a test-agents]
+      (send-off a exec-test))
+    @p))
+
+(defn summarise-results [tests]
+  (let [result-keys {:error 0 :failure 0 :success 0 :skipped 0 :total 0}
+        add-results (fn [r1 r2]
+                      (into {} (for [k (keys result-keys)]
+                                 [k (+ (r1 k 0) (r2 k 0))])))]
+    (->> tests
+         (reduce
+          (fn [suites test]
+            (if (str/blank? (:suite test))
+              (update suites (dec (count suites)) update :tests conj test)
+              (conj suites {:name (:suite test) :tests [test]}))) [])
+         (map (fn [suite]
+                (merge suite
+                       (reduce (fn[s t]
+                                 (-> s (update (some #(if (t %) %) (keys s)) inc) (update :total inc)))
+                               result-keys (:tests suite)))))
+         (#(assoc (reduce add-results %) :suites %)))))
+
+(defn print-test-results [{:keys[suites total failure error]}]
   (flush)
   (println "=============================================================")
-  (println "Test cases:" total ", failed:" total-failures)
-  (doseq [{:keys [suite results]} suites]
-    (println suite)
-    (doseq [result results :let [[test result] @result]][]
-           (print (if result "\u001B[31m [x] " "\u001B[32m [v] "))
-           (println test "\t" (or (first result) :OK) "\u001B[0m"))))
+  (println "Test cases:" total ", failed:" failure)
+  (doseq [suite suites]
+    (println (:name suite))
+    (doseq [test (:tests suite)
+            :let [result (some #(if-let [v (% test)] (str % " " v)) [:error :failure :skipped])]]
+      (print (if (:success test) "\u001B[32m [v] " "\u001B[31m [x] "))
+      (println (:test test) "\t" (or result :success) "\u001B[0m"))))
 
-(defn junit-report [dest-file {:keys[suites total total-failures]}]
+(defn junit-report [dest-file {:keys [suites]}]
   (make-parents dest-file)
   (with-open [out (writer dest-file)]
     (indent (sexp-as-element
              [:testsuites
-              (for [{:keys [suite results count failures]} suites]
-                [:testsuite {:name suite :errors 0 :tests count :failures failures}
-                 (for [r results :let [[test result] @r]]
-                   [:testcase {:name test :time 0}
-                    (if result [:failure {:message (first result)} (second result)])])])])
+              (for [{:keys [name tests total failure error skipped]} suites]
+                [:testsuite {:name name :errors error :tests total :failures failure}
+                 (for [test tests]
+                   [:testcase {:name (:test test) :time 0}
+                    (condp test nil
+                      :error :>> #(vector :error {:message %})
+                      :failure :>> #(vector :failure {:message %} (:resp test))
+                      :skipped [:skipped]
+                      nil)])])])
             out)))
 
 (defn -main
@@ -169,8 +257,8 @@
           _ (println "running with arguments:" opts)
           xml-report (or (opts "report")
                          (str "target/" (str/replace (first args) #"\.csv" "-results.xml")))
-          results (test-all (load-tests-from (first args) opts))]
+          results (-> args first tests-from (exec-tests opts) summarise-results)]
       ((juxt #(junit-report xml-report %) print-test-results) results)
-      (System/exit (:total-failures results)))
+      (System/exit (- (results :total 0) (results :success 0))))
     (finally
       (shutdown-agents))))
