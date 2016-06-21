@@ -32,7 +32,7 @@
     (str/replace s placeholder-pattern
                  #(str (or (opts (second %)) (log/error "missing argument:" (second %)) "")))))
 
-(defn- json->clj [json-str]
+(defn json->clj [json-str]
   (if-not (str/blank? json-str)
     (binding [factory/*json-factory* (factory/make-json-factory
                                       {:allow-unquoted-field-names true})]
@@ -74,27 +74,29 @@
     (log/debug "diff..." a b " is " ldiff)
     ldiff))
 
-(defn coerce-response [{:keys [body headers] :as resp}]
-  (assoc resp :body (condp re-find (or (:Content-Type headers) "")
-                      #"json" (json->clj body)
-                      #"xml" (try (parse-str body)
-                                  (catch Exception e (log/error e "failed parsing xml:" body) body))
-                      body)))
+(defn coerce-payload [payload content-type]
+  (try (condp re-find content-type
+         #"xml" (parse-str payload)
+         (json->clj payload))
+       (catch Exception e
+         (log/error e "failed coercing payload") payload)))
 
 (defn mk-request [{:keys[test url verb headers params payload] :as  req}]
   (log/info "executing" test ": " verb " " url)
-  (try
-    (-> (client/request {:url url
-                         :method (keyword (str/lower-case verb))
-                         ;; :content-type :json
-                         :headers headers
-                         :query-params params
-                         :body (if (string? payload) payload
-                                   (and (seq payload) (json/generate-string payload)))
-                         :insecure? true})
-        coerce-response)
-    (catch ExceptionInfo e
-      (.getData e))))
+  (let [start (System/nanoTime)]
+    (-> (try
+         (client/request {:url url
+                          :method (keyword (str/lower-case verb))
+                          ;; :content-type :json
+                          :headers headers
+                          :query-params params
+                          :body (if (string? payload) payload
+                                    (and (seq payload) (json/generate-string payload)))
+                          :insecure? true})
+         (catch ExceptionInfo e
+           (.getData e)))
+        (assoc :elapsed (/ (- (System/nanoTime) start) 1000))
+       (#(update % :body coerce-payload (get-in % [:headers "Content-Type"]))))))
 
 (defn extract-data [{:keys [status body headers] :as resp} extractions]
   (into {} (for [[name path] extractions]
@@ -146,11 +148,7 @@
     (let [options (into #{} (for [opt (str/split options #"\s*,\s*")] (keyword (str/lower-case opt))))
           exp-headers (str->map exp-headers #":")
           exp-body (if-not (str/blank? exp-body)
-                     (try (condp re-find (or (get exp-headers "Content-Type") "")
-                            #"xml" (parse-str exp-body)
-                            (json->clj exp-body))
-                          (catch Exception e
-                            (log/error e "failed parsing exp-body") exp-body)))]
+                     (coerce-payload exp-body (or (get exp-headers "Content-Type") "")))]
       (-> test (update :url replace-opts opts)
           (update :headers str->map #":" opts false)
           (update :params str->map #"\s*=\s*" opts true)
