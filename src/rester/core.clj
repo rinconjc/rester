@@ -95,7 +95,7 @@
                           :insecure? true})
          (catch ExceptionInfo e
            (.getData e)))
-        (assoc :elapsed (/ (- (System/nanoTime) start) 1000))
+        (assoc :elapsed (/ (- (System/nanoTime) start) 1000000.0))
        (#(update % :body coerce-payload (get-in % [:headers "Content-Type"]))))))
 
 (defn extract-data [{:keys [status body headers] :as resp} extractions]
@@ -163,7 +163,8 @@
   (let [test (if (:error test) test (prepare-test test @opts))]
     (if (:error test) test
         (let [resp (mk-request test)
-              delta (verify-response resp test)]
+              delta (verify-response resp test)
+              test (assoc test :time (:elapsed resp))]
           (if delta
             (assoc test :failure delta :resp resp)
             (do
@@ -227,7 +228,7 @@
       (print (if (:success test) "\u001B[32m [v] " "\u001B[31m [x] "))
       (println (:test test) "\t" (or result :success) "\u001B[0m"))))
 
-(defn junit-report [dest-file {:keys [suites]}]
+(defn junit-report [dest-file src-file {:keys [suites]}]
   (make-parents dest-file)
   (with-open [out (writer dest-file)]
     (indent (sexp-as-element
@@ -235,7 +236,7 @@
               (for [{:keys [name tests total failure error skipped]} suites]
                 [:testsuite {:name name :errors error :tests total :failures failure}
                  (for [test tests]
-                   [:testcase {:name (:test test) :time 0}
+                   [:testcase {:name (:test test) :classname src-file :time (:time test)}
                     (condp test nil
                       :error :>> #(vector :error {:message %})
                       :failure :>> #(vector :failure {:message %} (:resp test))
@@ -253,10 +254,11 @@
   (try
     (let [opts (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) (rest args)))
           _ (println "running with arguments:" opts)
+          tests-file (first args)
           xml-report (or (opts "report")
-                         (str "target/" (str/replace (first args) #"\.csv" "-results.xml")))
-          results (-> args first tests-from (exec-tests opts) summarise-results)]
-      ((juxt #(junit-report xml-report %) print-test-results) results)
+                         (str "target/" (str/replace tests-file #"\.csv" "-results.xml")))
+          results (-> tests-file tests-from (exec-tests opts) summarise-results)]
+      ((juxt #(junit-report xml-report tests-file %) print-test-results) results)
       (System/exit (- (results :total 0) (results :success 0))))
     (finally
       (shutdown-agents))))
