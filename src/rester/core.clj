@@ -75,28 +75,27 @@
     ldiff))
 
 (defn coerce-payload [payload content-type]
-  (try (condp re-find content-type
+  (try (condp re-find (or content-type "")
          #"xml" (parse-str payload)
+         #"text" payload
          (json->clj payload))
        (catch Exception e
          (log/error e "failed coercing payload") payload)))
 
 (defn mk-request [{:keys[test url verb headers params payload] :as  req}]
   (log/info "executing" test ": " verb " " url)
-  (let [start (System/nanoTime)]
-    (-> (try
-         (client/request {:url url
-                          :method (keyword (str/lower-case verb))
-                          ;; :content-type :json
-                          :headers headers
-                          :query-params params
-                          :body (if (string? payload) payload
-                                    (and (seq payload) (json/generate-string payload)))
-                          :insecure? true})
-         (catch ExceptionInfo e
-           (.getData e)))
-        (assoc :elapsed (/ (- (System/nanoTime) start) 1000))
-       (#(update % :body coerce-payload (get-in % [:headers "Content-Type"]))))))
+  (-> (try
+        (client/request {:url url
+                         :method (keyword (str/lower-case verb))
+                         ;; :content-type :json
+                         :headers headers
+                         :query-params params
+                         :body (if (string? payload) payload
+                                   (and (seq payload) (json/generate-string payload)))
+                         :insecure? true})
+        (catch ExceptionInfo e
+          (.getData e)))
+      (#(update % :body coerce-payload (get-in % [:headers "Content-Type"])))))
 
 (defn extract-data [{:keys [status body headers] :as resp} extractions]
   (into {} (for [[name path] extractions]
@@ -163,7 +162,8 @@
   (let [test (if (:error test) test (prepare-test test @opts))]
     (if (:error test) test
         (let [resp (mk-request test)
-              delta (verify-response resp test)]
+              delta (verify-response resp test)
+              test (assoc test :time (:request-time resp))]
           (if delta
             (assoc test :failure delta :resp resp)
             (do
@@ -183,7 +183,7 @@
                                     (try (exec-test-case test opts)
                                          (catch Exception e
                                            (log/error e "failed executing test")
-                                           (assoc test :done true :error (.getMessage e))))
+                                           (assoc test :error (str (or (.getMessage e) e)))))
                                     (assoc test :skipped "dependents failed"))
                                   :done true)
                                  test)]
@@ -212,7 +212,8 @@
          (map (fn [suite]
                 (merge suite
                        (reduce (fn[s t]
-                                 (-> s (update (some #(if (t %) %) (keys s)) inc) (update :total inc)))
+                                 (-> s (update (some #(if (t %) %) (keys s)) inc)
+                                     (update :total inc)))
                                result-keys (:tests suite)))))
          (#(assoc (reduce add-results %) :suites %)))))
 
@@ -235,7 +236,7 @@
               (for [{:keys [name tests total failure error skipped]} suites]
                 [:testsuite {:name name :errors error :tests total :failures failure}
                  (for [test tests]
-                   [:testcase {:name (:test test) :time 0}
+                   [:testcase {:name (:test test) :time (:time test)}
                     (condp test nil
                       :error :>> #(vector :error {:message %})
                       :failure :>> #(vector :failure {:message %} (:resp test))
