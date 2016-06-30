@@ -163,7 +163,7 @@
     (if (:error test) test
         (let [resp (mk-request test)
               delta (verify-response resp test)
-              test (assoc test :time (:request-time resp))]
+              test (assoc test :time (/ (:request-time resp) 1000.0))]
           (if delta
             (assoc test :failure delta :resp resp)
             (do
@@ -176,24 +176,25 @@
         count-down (atom (count tests))
         test-agents (vec (map agent tests))
         exec-test (fn[test]
-                    (let [deps (map #(nth test-agents %) (:deps test))
-                          test (if (every? (comp :done deref) deps)
-                                 (assoc
-                                  (if (every? (comp :success deref) deps)
-                                    (try (exec-test-case test opts)
-                                         (catch Exception e
-                                           (log/error e "failed executing test")
-                                           (assoc test :error (str (or (.getMessage e) e)))))
-                                    (assoc test :skipped "dependents failed"))
-                                  :done true)
-                                 test)]
-                      (if (:done test)
-                        (swap! count-down dec))
-                      test))]
+                    (if (:done test) test
+                        (let [deps (map #(nth test-agents %) (:deps test))
+                              test (if (every? (comp :done deref) deps)
+                                     (assoc
+                                      (if (every? (comp :success deref) deps)
+                                        (try (exec-test-case test opts)
+                                             (catch Exception e
+                                               (log/error e "failed executing test")
+                                               (assoc test :error (str (or (.getMessage e) e)))))
+                                        (assoc test :skipped "dependents failed"))
+                                      :done true)
+                                     test)]
+                          (if (:done test)
+                            (swap! count-down dec))
+                          test)))]
 
     (add-watch count-down :key (fn [k r o n] (if (zero? n) (deliver p (map deref test-agents)))))
     (doseq [a test-agents i (:deps @a)]
-      (add-watch (nth test-agents i) :key (fn [k r o n] (send-off a exec-test))))
+      (add-watch (nth test-agents i) [(:id @a) i] (fn [k r o n] (send-off a exec-test))))
     (doseq [a test-agents]
       (send-off a exec-test))
     @p))
