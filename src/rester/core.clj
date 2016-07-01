@@ -177,25 +177,27 @@
         test-agents (vec (map agent tests))
         exec-test (fn[test]
                     (if (:done test) test
-                        (let [deps (map #(nth test-agents %) (:deps test))
-                              test (if (every? (comp :done deref) deps)
-                                     (assoc
-                                      (if (every? (comp :success deref) deps)
-                                        (try (exec-test-case test opts)
-                                             (catch Exception e
-                                               (log/error e "failed executing test")
-                                               (assoc test :error (str (or (.getMessage e) e)))))
-                                        (assoc test :skipped "dependents failed"))
-                                      :done true)
-                                     test)]
-                          (if (:done test)
-                            (swap! count-down dec))
-                          test)))]
+                        (let [deps (map #(nth test-agents %) (:deps test))]
+                          (if (every? (comp :done deref) deps)
+                            (assoc
+                             (if (every? (comp :success deref) deps)
+                               (try (exec-test-case test opts)
+                                    (catch Exception e
+                                      (log/error e "failed executing test")
+                                      (assoc test :error (str (or (.getMessage e) e)))))
+                               (assoc test :skipped "dependents failed"))
+                             :done true)
+                            test))))]
 
-    (add-watch count-down :key (fn [k r o n] (if (zero? n) (deliver p (map deref test-agents)))))
+    (add-watch count-down :key (fn [k r o n]
+                                 (when (zero? n)
+                                   (log/info "execution complete!")
+                                   (deliver p (map deref test-agents)))))
     (doseq [a test-agents i (:deps @a)]
       (add-watch (nth test-agents i) [(:id @a) i] (fn [k r o n] (send-off a exec-test))))
     (doseq [a test-agents]
+      (add-watch a [(:id @a)] (fn [k r o n]
+                                (if (and (:done n) (not (:done o))) (swap! count-down dec))))
       (send-off a exec-test))
     @p))
 
@@ -213,7 +215,8 @@
          (map (fn [suite]
                 (merge suite
                        (reduce (fn[s t]
-                                 (-> s (update (some #(if (t %) %) (keys s)) inc)
+                                 (-> s (update (or (some #(if (t %) %) (keys s))
+                                                   (log/warn "unexpected:" t) :error) inc)
                                      (update :total inc)))
                                result-keys (:tests suite)))))
          (#(assoc (reduce add-results %) :suites %)))))
