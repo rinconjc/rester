@@ -13,7 +13,8 @@
              [xml :refer [emit-str indent parse-str sexp-as-element]]]
             [clojure.java.io :as io :refer [make-parents writer]]
             [clojure.tools.logging :as log]
-            [json-path :refer [at-path]])
+            [json-path :refer [at-path]]
+            [dk.ative.docjure.spreadsheet :refer [load-workbook sheet-seq row-seq cell-seq read-cell]])
   (:import [clojure.data.xml CData Element]
            clojure.lang.ExceptionInfo
            java.lang.Integer
@@ -130,11 +131,24 @@
    (or (and (visited x) x)
        (some #(cyclic? deps % (conj visited x)) (deps x)))))
 
+(defmulti read-rows (fn [file]
+                      (cond
+                        (str/ends-with? file ".csv") :csv
+                        (str/ends-with? file ".xlsx") :excel)))
+
+(defmethod read-rows :excel [file]
+  (into [] (->> (load-workbook file) sheet-seq first row-seq
+                (map #(map read-cell (cell-seq %)))
+                rest)))
+
+(defmethod read-rows :csv [file]
+  (with-open [in-file (io/reader file)]
+    (doall (rest (csv/read-csv in-file)))))
+
 (defn tests-from [file]
-  (let [tests (with-open [in-file (io/reader file)]
-                (->> (map #(zipmap fields %) (doall (rest (csv/read-csv in-file))))
-                     (map-indexed #(-> %2 (assoc :placeholders (placeholders-of %2) :id %1)
-                                       (update :extractions str->map #"\s*=\s*")))))
+  (let [tests (->> (map #(zipmap fields %) (read-rows file))
+                   (map-indexed #(-> %2 (assoc :placeholders (placeholders-of %2) :id %1)
+                                     (update :extractions str->map #"\s*=\s*"))))
         extractors (for [t tests :when (:extractions t)] [(:id t) (map first (:extractions t))])
         tests (map (fn [{:keys[placeholders] :as test}]
                      (assoc test :deps (for [[i extractions] extractors
