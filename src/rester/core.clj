@@ -49,6 +49,9 @@
           (filter #(or include-empty (not (str/blank? (second %)))))
           (into {})))))
 
+(defn print-http-message [req res]
+  )
+
 (defn diff* [a b]
   (let [ldiff (cond
                 (or (and (string? a) (str/blank? a)) (= a b)) nil
