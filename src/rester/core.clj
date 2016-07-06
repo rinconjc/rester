@@ -23,7 +23,7 @@
 (def ^:const fields [:suite :test :url :verb :headers :payload :params :exp-status :exp-body
                      :exp-headers :options :extractions])
 
-(def ^:const placeholder-pattern #"\$(\w+)\$")
+(def ^:const placeholder-pattern #"\$(\p{Alpha}\w*)")
 
 (defn placeholders [s]
   (set (map second (re-seq placeholder-pattern s))))
@@ -138,7 +138,8 @@
 
 (defmethod read-rows :excel [file]
   (into [] (->> (load-workbook file) sheet-seq first row-seq
-                (map #(map read-cell (cell-seq %)))
+                (map #(map (fn[i] (if-let [c (.getCell % i)] (str (read-cell c)) ""))
+                           (range (count fields))))
                 rest)))
 
 (defmethod read-rows :csv [file]
@@ -166,7 +167,7 @@
           (update :headers str->map #":" opts false)
           (update :params str->map #"\s*=\s*" opts true)
           (update :payload #(if (:dont_parse_payload options) % (json->clj %)))
-          (update :exp-status #(Integer/parseInt %))
+          (update :exp-status #(.intValue (Double/parseDouble %)))
           (assoc :exp-body exp-body :exp-headers exp-headers)))
     (catch Exception e
       (log/error e "error preparing test " (:test test))
