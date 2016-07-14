@@ -51,7 +51,18 @@
           (into {})))))
 
 (defn print-http-message [req res]
-  )
+  (let [format-body #(cond (instance? Element %) (emit-str %)
+                           (coll? %) (json/generate-string %)
+                           :else %)
+        format-headers (fn [headers]
+                         (->> headers (map #(str/join ":" %)) (str/join "\n")))]
+    (format "\n%s %s\n%s\npayload:\n%s\nresponse status:%d\n%s\nbody:\n%s"
+            (:verb req) (:url req)
+            (format-headers (:headers req))
+            (format-body (:payload req))
+            (:status res)
+            (format-headers (:headers res))
+            (format-body (:body res)))))
 
 (defn diff* [a b]
   (let [ldiff (cond
@@ -168,7 +179,7 @@
       (-> test (update :url replace-opts opts)
           (update :headers str->map #":" opts false)
           (update :params str->map #"\s*=\s*" opts true)
-          (update :payload #(if (:dont_parse_payload options) % (json->clj %)))
+          (update :payload #(-> % (replace-opts opts) ((if (:dont_parse_payload options) identity json->clj))))
           (update :exp-status #(Integer/parseInt %))
           (assoc :exp-body exp-body :exp-headers exp-headers)))
     (catch Exception e
@@ -260,7 +271,8 @@
                    [:testcase {:name (:test test) :classname src-file :time (:time test)}
                     (condp test nil
                       :error :>> #(vector :error {:message %})
-                      :failure :>> #(vector :failure {:message %} (:resp test))
+                      :failure :>> #(vector :failure {:message %}
+                                            (print-http-message test (:resp test)))
                       :skipped [:skipped]
                       nil)])])])
             out)))
