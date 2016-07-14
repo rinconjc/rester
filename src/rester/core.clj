@@ -23,7 +23,17 @@
 (def ^:const fields [:suite :test :url :verb :headers :payload :params :exp-status :exp-body
                      :exp-headers :options :extractions])
 
-(def ^:const placeholder-pattern #"\$(\p{Alpha}\w*)\$")
+(def ^:const placeholder-pattern #"\$(\p{Alpha}[^\$]*)\$")
+
+(defmulti pseudo-fn
+  "converts strings into function calls. e.g. now fmt=yyyy-MM-dd
+  tomorrow today roll=7days"
+  first)
+
+(defn eval [s]
+  (pseudo-fn (str/split s #"\s+")))
+
+(defmethod "now" (fn [_ ]))
 
 (defn placeholders [s]
   (set (map second (re-seq placeholder-pattern s))))
