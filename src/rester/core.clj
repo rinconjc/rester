@@ -23,7 +23,7 @@
 (def ^:const fields [:suite :test :url :verb :headers :payload :params :exp-status :exp-body
                      :exp-headers :options :extractions])
 
-(def ^:const placeholder-pattern #"\$(\p{Alpha}\w*)")
+(def ^:const placeholder-pattern #"\$(\p{Alpha}\w*)\$")
 
 (defn placeholders [s]
   (set (map second (re-seq placeholder-pattern s))))
