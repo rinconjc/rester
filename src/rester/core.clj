@@ -18,22 +18,39 @@
   (:import [clojure.data.xml CData Element]
            clojure.lang.ExceptionInfo
            java.lang.Integer
-           java.util.concurrent.Executors))
+           java.util.concurrent.Executors
+           java.util.Calendar
+           java.text.SimpleDateFormat))
 
 (def ^:const fields [:suite :test :url :verb :headers :payload :params :exp-status :exp-body
                      :exp-headers :options :extractions])
 
 (def ^:const placeholder-pattern #"\$(\p{Alpha}[^\$]*)\$")
+(def ^:const date-operand-pattern #"\s*(\+|-)\s*(\d+)\s*(\p{Alpha}+)")
+(def ^:const date-exp-pattern #"(\p{Alpha}+)((\s*(\+|-)\s*\d+\s*\p{Alpha}+)*)(:(.+))?")
+(def ^:const date-fields {"days" Calendar/DATE "day" Calendar/DATE "week" Calendar/WEEK_OF_YEAR
+                          "weeks" Calendar/WEEK_OF_YEAR "year" Calendar/YEAR "years" Calendar/YEAR
+                          "month" Calendar/MONTH "months" Calendar/MONTH})
 
-(defmulti pseudo-fn
-  "converts strings into function calls. e.g. now fmt=yyyy-MM-dd
-  tomorrow today roll=7days"
-  first)
+(defn eval-date-exp [cal [num name]]
+  (.roll cal (date-fields name Calendar/DATE) num))
 
-(defn eval [s]
-  (pseudo-fn (str/split s #"\s+")))
+(defn date-from-name [name]
+  (let [cal (Calendar/getInstance)]
+    (case name
+      "now" cal
+      "today" cal
+      "tomorrow" (do (.roll cal Calendar/DATE 1) cal)
+      nil)))
 
-(defmethod "now" (fn [_ ]))
+(defn parse-date-exp [s]
+  (if-let [[_ name operands _ _ _ fmt] (re-matches date-exp-pattern s)]
+    (if-let [cal (date-from-name name)]
+      (let [operations (for [[_ op n name] (re-seq date-operand-pattern operands)]
+                         [(* (if (= op "+") 1 -1) (Integer/parseInt n)) name])]
+        (doseq [op operations]
+          (eval-date-exp cal op))
+        (.format (SimpleDateFormat. (or fmt "yyyy-MM-dd")) (.getTime cal))))))
 
 (defn placeholders [s]
   (set (map second (re-seq placeholder-pattern s))))
@@ -41,7 +58,8 @@
 (defn- replace-opts [s opts]
   (if s
     (str/replace s placeholder-pattern
-                 #(str (or (opts (second %)) (log/error "missing argument:" (second %)) "")))))
+                 #(str (or (opts (second %) (parse-date-exp (second %)))
+                           (log/error "missing argument:" (second %)) "")))))
 
 (defn json->clj [json-str]
   (if-not (str/blank? json-str)
@@ -186,7 +204,7 @@
     (let [options (into #{} (for [opt (str/split options #"\s*,\s*")] (keyword (str/lower-case opt))))
           exp-headers (str->map exp-headers #":")
           exp-body (if-not (str/blank? exp-body)
-                     (coerce-payload exp-body (or (get exp-headers "Content-Type") "")))]
+                     (coerce-payload (replace-opts exp-body opts) (or (get exp-headers "Content-Type") "")))]
       (-> test (update :url replace-opts opts)
           (update :headers str->map #":" opts false)
           (update :params str->map #"\s*=\s*" opts true)

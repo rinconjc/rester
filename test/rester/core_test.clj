@@ -1,7 +1,9 @@
 (ns rester.core-test
   (:require [clojure.data.xml :refer [parse-str sexp-as-element]]
             [clojure.test :refer :all]
-            [rester.core :refer :all]))
+            [rester.core :refer :all])
+  (:import java.text.SimpleDateFormat
+           java.util.Date))
 
 (deftest diff-test
   (testing "diff scalars"
@@ -53,3 +55,12 @@
   (testing "cycles"
     (is (= :a (cyclic? {:a [:a]} :a)))
     (is (= :b (cyclic? {:a [:b :c] :b [:d] :d [:f] :f [:b]} :a)))))
+
+(deftest test-date-exps
+  (testing "simple date names"
+    (let [df (SimpleDateFormat. "yyyy-MM-dd")
+          today (.format df (Date.))]
+      (is (= today (parse-date-exp "now")))
+      (is (= today (parse-date-exp "today")))
+      (is (= (parse-date-exp "tomorrow") (parse-date-exp "today+1day")))
+      (is (= (parse-date-exp "today") (parse-date-exp "today +2days -2days"))))))
