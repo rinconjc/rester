@@ -1,6 +1,13 @@
 # rester
 
-Spreadsheet (CSV) driven Restful API test runner
+Rester is a simple tool to run REST API integration tests that are defined in a spreadsheet like Excel or CSV file.
+
+## Why?
+
+There are plenty of excelent DSLs and tools for REST API testing like [rest-assured](https://github.com/rest-assured/rest-assured), but overtime it becomes repetitive to define test cases in code. The tests follow generally the same pattern of specifying request data and checking for response data, such as HTTP status code or the responde payload. It seems more natural to define them as just data, and a spreadsheet is a good way to edit, store and represent data.
+
+The other benefit of defining test cases in spreadsheets is readability. Non developers, like business analysts or users may be able to read, understand and even define the test cases.
+
 
 ## Installation
 
