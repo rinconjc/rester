@@ -18,6 +18,7 @@ Test cases have to be defined in a Excel spreadsheet or CSV file using the below
 |  | Update user | $apiServer$/user/$createdUserId$ | PUT | Authorization: $apiAuth$, Content-Type:application/json | {name:"John Smith Jr.", email:"john.smith.jr@someco.com"} |  | 200 | {id:"#\\d+", name:"John Smith Jr."} | Content-Type:application/json |  | updatedUserId=$.id |
 |  | Delete user | $apiServer$/user/$createdUserId$ | DELETE | Authorization: $apiAuth$ |  |  | 200 | {id:"#\\d+"} | Content-Type:application/json |  | deletedUserId=$.id |
 |  | Deleted user should not exist | $apiServer$/user/$createdUserId$ | GET | Authorization: $apiAuth$  |  |  | 404 |  | Content-Type:application/json |  |  |
+| Another Suite  | Othe test name | http://myserver/myresource | POST | Authorization: $apiAuth$  |  |  | 200 |  | Content-Type:application/json |  |  |
 
 Here's a explanation of the columns:
 * **Test Suite**, and **Test Case** are self-explanatory, they are just some description of the test suite/case.
