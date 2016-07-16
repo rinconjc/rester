@@ -12,7 +12,7 @@ The other benefit of defining test cases in spreadsheets is readability. Non dev
 
 Test cases have to be defined in a Excel spreadsheet or CSV file using the below format.
 
-| Test Suite | Test Case | Target URL | Method | Headers | Payload | Params | Exp. Status | Exp. Body | Exp. Headers | Req. Options | Extractions |
+| Test Suite | Test Case | Target URL | Method | Headers | Payload | Params | Expected Status | Expected Body | Expected Headers | Request Options | Extractions |
 | ---------- | --------- | ---------- | ------ | ------- | ------- | ------ | -------- | ----- | ----- | ------- | ------ |
 | Users API | Create a user | $apiServer$/users | POST | Authorization: $apiAuth$, Content-Type:application/json | {name:"John Smith", email:"john.smith@someco.com"} |  | 200 | {id:"#\\d+", name:"John Smith"} | Content-Type:application/json |  | createdUserId=$.id |
 |  | Update user | $apiServer$/user/$createdUserId$ | PUT | Authorization: $apiAuth$, Content-Type:application/json | {name:"John Smith Jr.", email:"john.smith.jr@someco.com"} |  | 200 | {id:"#\\d+", name:"John Smith Jr."} | Content-Type:application/json |  | updatedUserId=$.id |
@@ -36,6 +36,7 @@ Here's a explanation of the columns:
 * **Variable extraction**. There used to define dependent tests, e.g. one test creates one entry and another gets or updates such entry.
 * **Dependent tests**. The test cases are run in parallel (configurable # of threads, 4 threads by default), and in no specific order, unless for dependent tests. Dependencies are determined implicitly from the *placeholder* sets of every test and the exported *variable extractions* of other tests. E.g In the above example *Update user* depends on *create a user* because the former uses the placeholder *createdUserId*, which is defined as extracted variable in the *create a user* test case.  
 * **Date expressions**. Expressions like $today$ or $today+1year-2weeks$ can be specified as placeholders. Currently, *now*,*today* and *tomorrow* are supported as dynamic dates. The expressions can use any of min, mins, hour, hours, day, days, week, weeks, month, months, year, years.     
+* **Regex support**. The expected headers and expected body, can include regex expressions using a *#* prefix. E.g. {id:"#\\d+"} 
 
 ## Installation
 
