@@ -1,12 +1,28 @@
 # rester
 
-Rester is a simple tool to run REST API integration tests that are defined in a spreadsheet like Excel or CSV file.
+Rester is a simple tool to run REST API integration tests defined in a Excel spreadsheet or CSV file.
 
 ## Why?
 
-There are plenty of excelent DSLs and tools for REST API testing like [rest-assured](https://github.com/rest-assured/rest-assured), but overtime it becomes repetitive to define test cases in code. The tests follow generally the same pattern of specifying request data and checking for response data, such as HTTP status code or the responde payload. It seems more natural to define them as just data, and a spreadsheet is a good way to edit, store and represent data.
+There are plenty of excelent DSLs and tools for REST API testing like [rest-assured](https://github.com/rest-assured/rest-assured), but overtime it becomes repetitive to define test cases in code. The tests follow generally the same pattern of specifying request data and checking for response data, such as HTTP status code or the responde payload. It seems more natural to define them just as data, and a spreadsheet is perhaps a good way to edit, store and represent data.
 
 The other benefit of defining test cases in spreadsheets is readability. Non developers, like business analysts or users may be able to read, understand and even define the test cases.
+
+## How?
+
+Test cases have to be defined in a Excel spreadsheet or CSV file using the below format.
+
+| Test Suite | Test Case | Target URL | Method | Headers | Payload | Params | Exp. Status | Exp. Body | Exp. Headers | Req. Options | Extractions |
+| ---------- | --------- | ---------- | ------ | ------- | ------- | ------ | -------- | ----- | ----- | ------- | ------ |
+| Users API | Create a user | $apiServer$/users | POST | Authorization: $apiAuth$, Content-Type:application/json | {name:"John Smith", email:"john.smith@someco.com"} |  | 200 | {id:"#\\d+", name:"John Smith"} | Content-Type:application/json |  | createdUserId=$.id |
+|  | Update user | $apiServer$/user/$createdUserId$ | PUT | Authorization: $apiAuth$, Content-Type:application/json | {name:"John Smith Jr.", email:"john.smith.jr@someco.com"} |  | 200 | {id:"#\\d+", name:"John Smith Jr."} | Content-Type:application/json |  | updatedUserId=$.id |
+|  | Delete user | $apiServer$/user/$createdUserId$ | DELETE | Authorization: $apiAuth$ |  |  | 200 | {id:"#\\d+"} | Content-Type:application/json |  | deletedUserId=$.id |
+|  | Deleted user should not exist | $apiServer$/user/$createdUserId$ | GET | Authorization: $apiAuth$  |  |  | 404 |  | Content-Type:application/json |  |  |
+
+
+
+
+
 
 
 ## Installation
