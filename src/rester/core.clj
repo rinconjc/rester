@@ -14,7 +14,8 @@
             [clojure.java.io :as io :refer [make-parents writer]]
             [clojure.tools.logging :as log]
             [json-path :refer [at-path]]
-            [dk.ative.docjure.spreadsheet :refer [load-workbook sheet-seq row-seq cell-seq read-cell]])
+            [dk.ative.docjure.spreadsheet :refer [load-workbook sheet-seq row-seq cell-seq read-cell]]
+            [clojure.data.xml :refer [cdata]])
   (:import [clojure.data.xml CData Element]
            clojure.lang.ExceptionInfo
            java.lang.Integer
@@ -30,12 +31,15 @@
 (def ^:const date-exp-pattern #"(\p{Alpha}+)((\s*(\+|-)\s*\d+\s*\p{Alpha}+)*)(:(.+))?")
 (def ^:const date-fields {"days" Calendar/DATE "day" Calendar/DATE "week" Calendar/WEEK_OF_YEAR
                           "weeks" Calendar/WEEK_OF_YEAR "year" Calendar/YEAR "years" Calendar/YEAR
-                          "month" Calendar/MONTH "months" Calendar/MONTH})
+                          "month" Calendar/MONTH "months" Calendar/MONTH
+                          "hour" Calendar/HOUR "hours" Calendar/HOUR
+                          "min" Calendar/MINUTE "mins" Calendar/MINUTE
+                          "sec" Calendar/SECOND "secs" Calendar/SECOND})
 
-(defn eval-date-exp [cal [num name]]
+(defn- eval-date-exp [cal [num name]]
   (.roll cal (date-fields name Calendar/DATE) num))
 
-(defn date-from-name [name]
+(defn- date-from-name [name]
   (let [cal (Calendar/getInstance)]
     (case name
       "now" cal
@@ -84,7 +88,7 @@
                            :else %)
         format-headers (fn [headers]
                          (->> headers (map #(str/join ":" %)) (str/join "\n")))]
-    (format "\n%s %s\n%s\npayload:\n%s\nresponse status:%d\n%s\nbody:\n%s"
+    (format "\n%s %s\n%s\npayload:\n%s\nresponse status:%d\n%s\nbody:\n%s\n"
             (:verb req) (:url req)
             (format-headers (:headers req))
             (format-body (:payload req))
@@ -153,7 +157,7 @@
                        {:keys [exp-status exp-headers exp-body]}]
   (or
    (and (not= status exp-status)
-        (str "status " status " not equal to expected " exp-status))
+        (format "expected status %d, but received %d" exp-status status))
    (some (fn [[header value]]
            (if (not= value (headers header))
              (str "header " header " was " (headers header) " expected " value))) exp-headers)
@@ -301,14 +305,20 @@
                     (condp test nil
                       :error :>> #(vector :error {:message %})
                       :failure :>> #(vector :failure {:message %}
-                                            (print-http-message test (:resp test)))
+                                            [:-cdata (print-http-message test (:resp test))])
                       :skipped [:skipped]
                       nil)])])])
             out)))
 
 (defn -main
-  "Given a CSV file with HTTP request, executes the requests are verifies the expected response"
+  "Executes HTTP requests specified in the argument provided spreadsheet."
   [& args]
+  (when-not (seq args)
+    (println "Usage: \njava -jar rester-0.1.0-beta2.jar <rest-test-cases.csv> [placeholder replacements as :placeholder-name value]
+or
+lein run -m rester.core <rest-test-cases.csv> [placeholder replacements as :placeholder-name value]")
+    (System/exit 1))
+
   (let [pool-size (Integer/parseInt (or (System/getProperty "thread-pool-size") "4"))]
     (log/info "thread pool size:" pool-size)
     (set-agent-send-executor! (Executors/newFixedThreadPool pool-size))
