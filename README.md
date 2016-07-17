@@ -39,13 +39,9 @@ Here's a explanation of the columns:
 * **Date expressions**. Expressions like $today$ or $today+1year-2weeks$ can be specified as placeholders. Currently, *now*,*today* and *tomorrow* are supported as dynamic dates. The expressions can use any of min, mins, hour, hours, day, days, week, weeks, month, months, year, years.     
 * **Regex support**. The expected headers and expected body, can include regex expressions using a *#* prefix. E.g. {id:"#\\d+"} 
 
-## Installation
-
-Download from http://example.com/FIXME.
-
 ## Usage
 
-Create your tests suites in a CSV File [like this](btc-markets.csv)
+Create your tests suites in a CSV File [like this](sample-tests.csv)
 Run the script with:
 
     $ lein run -m rester.core <path to your csv file> :placeholder-name placeholder-value ...
