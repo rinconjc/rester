@@ -1,10 +1,10 @@
 Test Suite,Test Name,Target URL,HTTP VERB,HEADERS,PAYLOAD,PARAMS,EXPECTED STATUS,EXPECTED BODY,EXPECTED HEADERS,REQUEST_OPTIONS,EXTRACTIONS
-Market data,Invalid path,$baseUrl/marketx/BTC/AUD/tick,GET,,,,404,,,,
-,Valid path,$baseUrl/market/BTC/AUD/tick,GET,,,,200,"{currency:""AUD"", instrument:""BTC""}",,,
-Fake API,Create post,$fakeServer/posts,POST,Content-Type:application/json,"{userId:10, title:""title1"", body:""test post 1""}",,201,"{title:""title1"", body:""test post 1""}",Content-Type:application/json; charset=utf-8,,
-,Updated post,$fakeServer/posts/1,PUT,Content-Type:application/json,"{title:""foo"", body:""bar"", userId:""7""}",,200,"{id:1,title:""foo"", body:""bar""}",Content-Type:application/json; charset=utf-8,,
-,Delete post,$fakeServer/posts/1,DELETE,Content-Type:application/json,,,200,,Content-Type:application/json; charset=utf-8,,
-,Updated post,$fakeServer/posts,POST,Content-Type:application/json,"{title:""foo"", body:""bar"", userId:""7""}",,500,#SyntaxError,Content-Type:text/html; charset=utf-8,DONT_PARSE_PAYLOAD,
+Market data,Invalid path,$baseUrl$/marketx/BTC/AUD/tick,GET,,,,404,,,,
+,Valid path,$baseUrl$/market/BTC/AUD/tick,GET,,,,200,"{currency:""AUD"", instrument:""BTC""}",,,
+Fake API,Create post,$fakeServer$/posts,POST,Content-Type:application/json,"{userId:10, title:""title1"", body:""test post 1""}",,201,"{title:""title1"", body:""test post 1""}",Content-Type:application/json; charset=utf-8,,
+,Updated post,$fakeServer$/posts/1,PUT,Content-Type:application/json,"{title:""foo"", body:""bar"", userId:""7""}",,200,"{id:1,title:""foo"", body:""bar""}",Content-Type:application/json; charset=utf-8,,
+,Delete post,$fakeServer$/posts/1,DELETE,Content-Type:application/json,,,200,,Content-Type:application/json; charset=utf-8,,
+,Updated post,$fakeServer$/posts,POST,Content-Type:application/json,"{title:""foo"", body:""bar"", userId:""7""}",,500,#SyntaxError,Content-Type:text/html; charset=utf-8,DONT_PARSE_PAYLOAD,
 SOAP Tests,Nearby stuff,http://api.geosvc.com/soap,POST,Content-Type: application/soap+xml; charset=utf-8,"<?xml version=""1.0""?>
 <soapenv:Envelope xmlns:soapenv=""http://schemas.xmlsoap.org/soap/envelope/"" xmlns:geos=""http://geoservice/"">
     <soapenv:Header>
@@ -23,5 +23,5 @@ SOAP Tests,Nearby stuff,http://api.geosvc.com/soap,POST,Content-Type: applicatio
         <Locations xmlns=""http://geoservice/"" xmlns:i=""http://www.w3.org/2001/XMLSchema-instance""> </Locations>
     </s:Body>
 </s:Envelope>",Content-Type:application/xml,DONT_PARSE_PAYLOAD,
-Complex Tests,Create a post,$fakeServer/posts,POST,Content-Type:application/json,"{userId:100, title:""great post"", body:""great test body""}",,201,"{id:""#\\d+"",title:""great post""}",Content-Type:application/json; charset=utf-8,,postId=$.id
-,Retrieve created post,$fakeServer/posts/$postId,GET,,,,200,"{id:""#\\d+"",title:""great post""}",,,
+Complex Tests,Create a post,$fakeServer$/posts,POST,Content-Type:application/json,"{userId:100, title:""great post"", body:""great test body""}",,201,"{id:""#\\d+"",title:""great post""}",Content-Type:application/json; charset=utf-8,,postId=$.id
+,Retrieve created post,$fakeServer$/posts/$postId$,GET,,,,200,"{id:""#\\d+"",title:""great post""}",,,
