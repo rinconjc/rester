@@ -84,9 +84,10 @@
                            :else %)
         format-headers (fn [headers]
                          (->> headers (map #(str/join ":" %)) (str/join "\n")))]
-    (format "\n%s %s\n%s\npayload:\n%s\nresponse status:%d\n%s\nbody:\n%s"
+    (format "\n%s %s\n%s\nparams:%s\npayload:\n%s\nresponse status:%d\n%s\nbody:\n%s"
             (:verb req) (:url req)
             (format-headers (:headers req))
+            (format-headers (:params req))
             (format-body (:payload req))
             (:status res)
             (format-headers (:headers res))
