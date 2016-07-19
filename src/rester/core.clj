@@ -44,7 +44,7 @@
     (case name
       "now" cal
       "today" cal
-      "tomorrow" (do (.roll cal Calendar/DATE 1) cal)
+      "tomorrow" (do (.add cal Calendar/DATE 1) cal)
       nil)))
 
 (defn parse-date-exp [s]
