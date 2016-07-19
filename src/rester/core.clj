@@ -37,7 +37,7 @@
                           "sec" Calendar/SECOND "secs" Calendar/SECOND})
 
 (defn- eval-date-exp [cal [num name]]
-  (.roll cal (date-fields name Calendar/DATE) num))
+  (.add cal (date-fields name Calendar/DATE) num))
 
 (defn- date-from-name [name]
   (let [cal (Calendar/getInstance)]
@@ -88,7 +88,7 @@
                            :else %)
         format-headers (fn [headers]
                          (->> headers (map #(str/join ":" %)) (str/join "\n")))]
-    (format "\n%s %s\n%s\nparams:%s\npayload:\n%s\nresponse status:%d\n%s\nbody:\n%s"
+    (format "\n%s %s\n%s\nparams:\n%s\npayload:\n%s\nresponse status:%d\n%s\nbody:\n%s"
             (:verb req) (:url req)
             (format-headers (:headers req))
             (format-headers (:params req))
