@@ -13,15 +13,16 @@
              [xml :refer [emit-str indent parse-str sexp-as-element]]]
             [clojure.java.io :as io :refer [make-parents writer]]
             [clojure.tools.logging :as log]
-            [json-path :refer [at-path]]
-            [dk.ative.docjure.spreadsheet :refer [load-workbook sheet-seq row-seq cell-seq read-cell]]
-            [clojure.data.xml :refer [cdata]])
+            [dk.ative.docjure.spreadsheet
+             :refer
+             [load-workbook read-cell row-seq select-sheet sheet-seq]]
+            [json-path :refer [at-path]])
   (:import [clojure.data.xml CData Element]
            clojure.lang.ExceptionInfo
            java.lang.Integer
-           java.util.concurrent.Executors
+           java.text.SimpleDateFormat
            java.util.Calendar
-           java.text.SimpleDateFormat))
+           java.util.concurrent.Executors))
 
 (def ^:const fields [:suite :test :url :verb :headers :payload :params :exp-status :exp-body
                      :exp-headers :options :extractions])
@@ -179,23 +180,27 @@
    (or (and (visited x) x)
        (some #(cyclic? deps % (conj visited x)) (deps x)))))
 
-(defmulti read-rows (fn [file]
+(defmulti read-rows (fn [file _]
                       (cond
                         (str/ends-with? file ".csv") :csv
                         (str/ends-with? file ".xlsx") :excel)))
 
-(defmethod read-rows :excel [file]
-  (into [] (->> (load-workbook file) sheet-seq first row-seq
-                (map #(map (fn[i] (if-let [c (.getCell % i)] (str (read-cell c)) ""))
-                           (range (count fields))))
-                rest)))
+(defmethod read-rows :excel [file sheet]
+  (let [wk-book (load-workbook file)
+        wk-sheet (cond
+                   (string? sheet) (-> wk-book (select-sheet sheet))
+                   :else (-> wk-book sheet-seq first))]
+    (into [] (->> wk-sheet row-seq
+                  (map #(map (fn[i] (if-let [c (.getCell % i)] (str (read-cell c)) ""))
+                             (range (count fields))))
+                  rest))))
 
-(defmethod read-rows :csv [file]
+(defmethod read-rows :csv [file _]
   (with-open [in-file (io/reader file)]
     (doall (rest (csv/read-csv in-file)))))
 
-(defn tests-from [file]
-  (let [tests (->> (map #(zipmap fields %) (read-rows file))
+(defn tests-from [file sheet]
+  (let [tests (->> (map #(zipmap fields %) (read-rows file sheet))
                    (map-indexed #(-> %2 (assoc :placeholders (placeholders-of %2) :id %1)
                                      (update :extractions str->map #"\s*=\s*"))))
         extractors (for [t tests :when (:extractions t)] [(:id t) (map first (:extractions t))])
@@ -295,22 +300,23 @@
       (print (if (:success test) "\u001B[32m [v] " "\u001B[31m [x] "))
       (println (:test test) "\t" (or result :success) "\u001B[0m"))))
 
-(defn junit-report [dest-file src-file {:keys [suites]}]
-  (make-parents dest-file)
-  (with-open [out (writer dest-file)]
-    (indent (sexp-as-element
-             [:testsuites
-              (for [{:keys [name tests total failure error skipped]} suites]
-                [:testsuite {:name name :errors error :tests total :failures failure}
-                 (for [test tests]
-                   [:testcase {:name (:test test) :classname src-file :time (:time test)}
-                    (condp test nil
-                      :error :>> #(vector :error {:message %})
-                      :failure :>> #(vector :failure {:message %}
-                                            [:-cdata (print-http-message test (:resp test))])
-                      :skipped [:skipped]
-                      nil)])])])
-            out)))
+(defn junit-report [opts src-file {:keys [suites]}]
+  (let [dest-file (opts "report.file" (str "target/" (str/replace src-file #"\.[^.]+" "-results.xml")))]
+    (make-parents dest-file)
+    (with-open [out (writer dest-file)]
+      (indent (sexp-as-element
+               [:testsuites
+                (for [{:keys [name tests total failure error skipped]} suites]
+                  [:testsuite {:name name :errors error :tests total :failures failure}
+                   (for [test tests]
+                     [:testcase {:name (:test test) :classname src-file :time (:time test)}
+                      (condp test nil
+                        :error :>> #(vector :error {:message %})
+                        :failure :>> #(vector :failure {:message %}
+                                              [:-cdata (print-http-message test (:resp test))])
+                        :skipped [:skipped]
+                        nil)])])])
+              out))))
 
 (defn -main
   "Executes HTTP requests specified in the argument provided spreadsheet."
@@ -327,12 +333,9 @@ lein run -m rester.core <rest-test-cases.csv> [placeholder replacements as :plac
     (set-agent-send-off-executor! (Executors/newFixedThreadPool pool-size)))
   (try
     (let [opts (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) (rest args)))
-          _ (println "running with arguments:" opts)
           tests-file (first args)
-          xml-report (or (opts "report")
-                         (str "target/" (str/replace tests-file #"\.csv" "-results.xml")))
-          results (-> tests-file tests-from (exec-tests opts) summarise-results)]
-      ((juxt #(junit-report xml-report tests-file %) print-test-results) results)
+          results (-> tests-file (tests-from (opts "sheet")) (exec-tests opts) summarise-results)]
+      ((juxt #(junit-report opts tests-file %) print-test-results) results)
       (System/exit (- (results :total 0) (results :success 0))))
     (finally
       (shutdown-agents))))
