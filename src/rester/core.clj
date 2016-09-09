@@ -128,7 +128,8 @@
          #"text" payload
          (json->clj payload))
        (catch Exception e
-         (log/error e "failed coercing payload") payload)))
+         (log/error e "failed coercing payload" payload)
+         payload)))
 
 (defn mk-request [{:keys[test url verb headers params payload] :as  req}]
   (log/info "executing" test ": " verb " " url)
