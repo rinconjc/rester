@@ -230,9 +230,9 @@
     (if (:error test) test
         (let [resp (mk-request test)
               delta (verify-response resp test)
-              test (assoc test :time (/ (:request-time resp) 1000.0))]
+              test (assoc test :time (/ (:request-time resp) 1000.0) :resp resp)]
           (if delta
-            (assoc test :failure delta :resp resp)
+            (assoc test :failure delta)
             (do
               (swap! opts merge (extract-data resp (:extractions test)))
               (assoc test :success true)))))))
@@ -300,7 +300,8 @@
       (println (:test test) "\t" (or result :success) "\u001B[0m"))))
 
 (defn junit-report [opts src-file {:keys [suites]}]
-  (let [dest-file (opts "report.file" (str "target/" (str/replace src-file #"\.[^.]+" "-results.xml")))]
+  (let [dest-file (opts "report.file"
+                        (str "target/" (str/replace src-file #"\.[^.]+" "-results.xml")))]
     (make-parents dest-file)
     (with-open [out (writer dest-file)]
       (indent (sexp-as-element
@@ -314,6 +315,8 @@
                         :failure :>> #(vector :failure {:message %}
                                               [:-cdata (print-http-message test (:resp test))])
                         :skipped [:skipped]
+                        :success (if (opts "report.http-log")
+                                        [:-cdata (print-http-message test (:resp test))])
                         nil)])])])
               out))))
 

@@ -1,0 +1,9 @@
+language: clojure
+before-deploy: "lein uberjar"
+deploy:
+  provider: releases
+  api_key: "c7fe051157fde1e717dd46b692ace43a6bc8f0cb"
+  file: "target/*standalone.jar"
+  skip_cleanup: true
+  on:
+    tags: true
