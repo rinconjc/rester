@@ -4,6 +4,6 @@ deploy:
   provider: releases
   api_key:
     secure: eXbCV6rcSiouyzXoDH9JFgsFHArerpLTt2mMdXCKSRv7C7Wc71KrtHG88vBQ0Pc0+Ol/vtUs0K0kUZr48C+l6SdyPIS4wSiGDqfPBKgh0g5tf9StiZjLaTfb7Ryh6Gos7V0Zzjd3Risjo7L5Tf7TmxFYMEm2+o5l8h9Z/2dLjOh6JvpRmOX8feEpNEEb4Srdwn/JmTT60R2M1DGAnzUbuiSiGCaBZQyTnCxs1tOVQ5jcnF2v+lxtgtpcQmycgWVAJpNcrbEUR47zwl97eNrExgkLksmF6FbOMCFOzGXk0dU3iXBr8MV/7emdzmeLb/J2wYs31OUo8Bt4ZPVUOnlV+sUh5grO1cg8mJJ0Nxzegbvr7Qu41xmp6FwYBzeN7R+hnCQGsi0vXCEa//uPxtEC50lwun0iGZzDaAArYmTnL9CSMuheYq7iAJC1U1FzPYE4kA3eVJUUje0wfng1pt/k/qEhduHcx2FQ3IR5ToUq6Q5f0eNUD9+4gPvGltRKveOMwXs1Vi+jHxONhF4DingkmdRcq2l7yeTWfhOr5GEzjv7y0asE9I/bfT9f1dZsGlnYZ4Hjo9MBpKMIs578+EGaVYnhMdFWp0aAQbQIU4uh3dU1AYo49qxXgAGDAEjbLxz9l1ZU/E5FCTgg9q6qZmJp5MIfFQJ5RqZlrKDx8uyRO7E=
-  file: target/uberjar/*-standalone.jar
+  file: target/uberjar/rester.jar
   on:
     tags: true
