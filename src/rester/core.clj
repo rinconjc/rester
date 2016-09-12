@@ -187,7 +187,7 @@
 (defmethod read-rows :excel [file sheet]
   (let [wk-book (load-workbook file)
         wk-sheet (cond
-                   (string? sheet) (-> wk-book (select-sheet sheet))
+                   (string? sheet) (select-sheet sheet wk-book)
                    :else (-> wk-book sheet-seq first))]
     (into [] (->> wk-sheet row-seq
                   (map #(map (fn[i] (if-let [c (.getCell % i)] (str (read-cell c)) ""))
