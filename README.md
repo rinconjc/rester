@@ -1,5 +1,4 @@
-# rester
-
+# rester ![build status](https://travis-ci.org/rinconjc/rester.svg?branch=master)
 Rester is a simple tool to run REST API integration tests defined in a Excel spreadsheet or CSV file.
 
 ## Why?
