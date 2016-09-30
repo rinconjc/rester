@@ -171,8 +171,8 @@
                     (json/generate-string %)))
           (str "expected body missing:" )))))
 
-(defn placeholders-of [{:keys[url headers params payload]}]
-  (apply union (map placeholders [url headers params payload])))
+(defn placeholders-of [{:keys[url headers params payload exp-body]}]
+  (apply union (map placeholders [url headers params payload exp-body])))
 
 (defn cyclic?
   ([deps x] (cyclic? deps x #{}))
