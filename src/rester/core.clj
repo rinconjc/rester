@@ -76,12 +76,13 @@
   ([s sep] (str->map s sep {} false))
   ([s sep opts include-empty]
    (if-not (str/blank? s)
-     (->> (str/split s #"\s*,\s*")
-          (map #(let [[k v] (str/split % sep 2)
-                      v (or v (log/warn "missing key or value in " k))]
-                  [k (replace-opts v opts)]))
-          (filter #(or include-empty (not (str/blank? (second %)))))
-          (into {})))))
+     (let [[sep1 sep] (if (vector? sep) sep [#"\s*,\s*" sep])]
+       (->> (str/split s sep1)
+           (map #(let [[k v] (str/split % sep 2)
+                       v (or v (log/warn "missing key or value in " k))]
+                   [k (replace-opts v opts)]))
+           (filter #(or include-empty (not (str/blank? (second %)))))
+           (into {}))))))
 
 (defn print-http-message [req res]
   (let [format-body #(cond (instance? Element %) (emit-str %)
@@ -218,7 +219,7 @@
                      (coerce-payload (replace-opts exp-body opts) (or (get exp-headers "Content-Type") "")))]
       (-> test (update :url replace-opts opts)
           (update :headers str->map #":" opts false)
-          (update :params str->map #"\s*=\s*" opts true)
+          (update :params str->map  [#"&|(\s*,\s*)" #"\s*=\s*"] opts true)
           (update :payload #(-> % (replace-opts opts) ((if (:dont_parse_payload options) identity json->clj))))
           (update :exp-status #(.intValue (Double/parseDouble %)))
           (assoc :exp-body exp-body :exp-headers exp-headers)))
