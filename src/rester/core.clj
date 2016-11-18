@@ -162,7 +162,7 @@
    (and (not= status exp-status)
         (format "expected status %d, but received %d" exp-status status))
    (some (fn [[header value]]
-           (if (not= value (headers header))
+           (if-not (.contains (str (headers header) "") value)
              (str "header " header " was " (headers header) " expected " value))) exp-headers)
    (when-let [ldiff (diff* exp-body body)]
      (log/error "failed matching body. expected:" exp-body " got:" body)
