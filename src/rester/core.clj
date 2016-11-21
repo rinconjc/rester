@@ -202,6 +202,7 @@
 
 (defn tests-from [file sheet]
   (let [tests (->> (map #(zipmap fields %) (read-rows file sheet))
+                   (filter #(not (str/blank? (:test %))))
                    (map-indexed #(-> %2 (assoc :placeholders (placeholders-of %2) :id %1)
                                      (update :extractions str->map #"\s*=\s*"))))
         extractors (for [t tests :when (:extractions t)] [(:id t) (map first (:extractions t))])
@@ -224,7 +225,7 @@
           (update :exp-status #(.intValue (Double/parseDouble %)))
           (assoc :exp-body exp-body :exp-headers exp-headers)))
     (catch Exception e
-      (log/error e "error preparing test " (:test test))
+      (log/error e "error preparing test -> " (:test test))
       (assoc test :error (str "error preparing test due to " e)))))
 
 (defn exec-test-case [test opts]
