@@ -78,26 +78,35 @@
    (if-not (str/blank? s)
      (let [[sep1 sep] (if (vector? sep) sep [#"\s*,\s*" sep])]
        (->> (str/split s sep1)
-           (map #(let [[k v] (str/split % sep 2)
-                       v (or v (log/warn "missing key or value in " k))]
-                   [k (replace-opts v opts)]))
-           (filter #(or include-empty (not (str/blank? (second %)))))
-           (into {}))))))
+            (map #(let [[k v] (str/split % sep 2)
+                        v (or v (log/warn "missing key or value in " k))]
+                    [k (replace-opts v opts)]))
+            (filter #(or include-empty (not (str/blank? (second %)))))
+            (into {}))))))
+
+(defn- body-to-string [body]
+  (cond (instance? Element body) (emit-str body)
+        (coll? body) (json/generate-string body)
+        :else body))
+
+(defn print-curl-request [req]
+  (str "curl -v -X" (:verb req) " " (:url req)
+       (if-not (empty? (:params req))
+         (str (if-not (.contains (:url req) "?") "?") (->> req :params (map #(str/join "=" %)) (#(str/join "&" %))))) " "
+       (->> req :headers (map #(str "-H'" (first %) ":" (second %) "' ")) str/join)
+       (if-not (empty? (:payload req)) (str " -d '" (body-to-string (:payload req)) "'"))))
 
 (defn print-http-message [req res]
-  (let [format-body #(cond (instance? Element %) (emit-str %)
-                           (coll? %) (json/generate-string %)
-                           :else %)
-        format-headers (fn [headers]
-                         (->> headers (map #(str/join ":" %)) (str/join "\n")))]
-    (format "\n%s %s\n%s\nparams:\n%s\npayload:\n%s\nresponse status:%d\n%s\nbody:\n%s"
-            (:verb req) (:url req)
-            (format-headers (:headers req))
-            (format-headers (:params req))
-            (format-body (:payload req))
-            (:status res)
-            (format-headers (:headers res))
-            (format-body (:body res)))))
+  (let [format-headers (fn [headers]
+                         (->> headers (map #(str/join ":" %)) (str/join "\n")))
+        req-str (if (System/getProperty "nocurl")
+                  (format "\n%s %s\n%s\nparams:\n%s\npayload:\n%s\n" (:verb req) (:url req)
+                          (format-headers (:headers req))
+                          (format-headers (:params req)) (body-to-string (:payload req)))
+                  (print-curl-request req))]
+
+    (format "\n%s\n--------------\nresponse status:%d\n%s\nbody:\n%s"
+            req-str (:status res) (format-headers (:headers res)) (body-to-string (:body res)))))
 
 (defn diff* [a b]
   (let [ldiff (cond
@@ -151,7 +160,9 @@
 (defn extract-data [{:keys [status body headers] :as resp} extractions]
   (into {} (for [[name path] extractions]
              (try
-               (let [result (at-path path body)]
+               (let [result (if (.startsWith path "$")
+                              (at-path path body)
+                              (at-path (str "$." path) resp))]
                  (log/info "extracted:" name "=" result)
                  [name result])
                (catch Exception e
@@ -163,7 +174,7 @@
    (and (not= status exp-status)
         (format "expected status %d, but received %d" exp-status status))
    (some (fn [[header value]]
-           (if-not (.contains (str (headers header) "") value)
+           (if (diff* (str/trim value) (headers header))
              (str "header " header " was " (headers header) " expected " value))) exp-headers)
    (when-let [ldiff (diff* exp-body body)]
      (log/error "failed matching body. expected:" exp-body " got:" body)
@@ -242,6 +253,7 @@
 
 (defn exec-tests [tests opts]
   (let [opts (atom opts)
+        skip-tag (:skip opts)
         p (promise)
         count-down (atom (count tests))
         test-agents (vec (map agent tests))
@@ -250,12 +262,13 @@
                         (let [deps (map #(nth test-agents %) (:deps test))]
                           (if (every? (comp :done deref) deps)
                             (assoc
-                             (if (every? (comp :success deref) deps)
-                               (try (exec-test-case test opts)
-                                    (catch Exception e
-                                      (log/error e "failed executing test")
-                                      (assoc test :error (str (or (.getMessage e) e)))))
-                               (assoc test :skipped "dependents failed"))
+                             (cond
+                               (and skip-tag (= skip-tag (-> test :options :skip))) (assoc test :skipped "skip requested")
+                               (every? (comp :success deref) deps) (try (exec-test-case test opts)
+                                                                        (catch Exception e
+                                                                          (log/error e "failed executing test")
+                                                                          (assoc test :error (str (or (.getMessage e) e)))))
+                               :else (assoc test :skipped "dependents failed"))
                              :done true)
                             test))))]
 
@@ -319,7 +332,7 @@
                                               [:-cdata (print-http-message test (:resp test))])
                         :skipped [:skipped]
                         :success (if (opts "report.http-log")
-                                        [:-cdata (print-http-message test (:resp test))])
+                                   [:-cdata (print-http-message test (:resp test))])
                         nil)])])])
               out))))
 
