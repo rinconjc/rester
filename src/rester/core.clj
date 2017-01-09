@@ -129,6 +129,7 @@
                               (re-find #"\s*<[^>]+>" a) (try (diff* (parse-str a) (parse-str b))
                                                              (catch Exception e a))
                               :else a)
+                (and (nil? a) (some? b)) (str b " not null")
                 :else a)]
     (log/debug "diff..." a b " is " ldiff)
     ldiff))
@@ -176,7 +177,7 @@
    (some (fn [[header value]]
            (if (diff* (str/trim value) (headers header))
              (str "header " header " was " (headers header) " expected " value))) exp-headers)
-   (when-let [ldiff (diff* exp-body body)]
+   (when-let [ldiff (if exp-body (diff* exp-body body))]
      (log/error "failed matching body. expected:" exp-body " got:" body)
      (->> ldiff (#(if (instance? Element %)
                     (emit-str %)
