@@ -3,7 +3,9 @@
   (:require [cheshire
              [core :as json]
              [factory :as factory]]
-            [clj-http.client :as client]
+            [clj-http
+             [client :as client]
+             [conn-mgr :refer [make-reusable-conn-manager]]]
             [clojure
              [core :refer [set-agent-send-executor!]]
              [set :refer [union]]
@@ -143,6 +145,8 @@
          (log/error e "failed coercing payload" payload)
          payload)))
 
+(def conn-mgr (delay (make-reusable-conn-manager {:insecure? true})))
+
 (defn mk-request [{:keys[test url verb headers params payload] :as  req}]
   (log/info "executing" test ": " verb " " url)
   (-> (try
@@ -153,7 +157,8 @@
                          :query-params params
                          :body (if (string? payload) payload
                                    (and (seq payload) (json/generate-string payload)))
-                         :insecure? true})
+                         :insecure? true
+                         :connection-manager @conn-mgr})
         (catch ExceptionInfo e
           (.getData e)))
       (#(update % :body coerce-payload (get-in % [:headers "Content-Type"])))))
@@ -243,14 +248,18 @@
 (defn exec-test-case [test opts]
   (let [test (if (:error test) test (prepare-test test @opts))]
     (if (:error test) test
-        (let [resp (mk-request test)
-              delta (verify-response resp test)
-              test (assoc test :time (/ (:request-time resp) 1000.0) :resp resp)]
-          (if delta
-            (assoc test :failure delta)
-            (do
-              (swap! opts merge (extract-data resp (:extractions test)))
-              (assoc test :success true)))))))
+        (try
+          (let [resp (mk-request test)
+                delta (verify-response resp test)
+                test (assoc test :time (/ (:request-time resp) 1000.0) :resp resp)]
+            (if delta
+              (assoc test :failure delta)
+              (do
+                (swap! opts merge (extract-data resp (:extractions test)))
+                (assoc test :success true))))
+          (catch Exception e
+            (log/error e "failed executing test")
+            (assoc test :error (str (or (.getMessage e) e))))))))
 
 (defn exec-tests [tests opts]
   (let [opts (atom opts)
@@ -265,10 +274,7 @@
                             (assoc
                              (cond
                                (and skip-tag (= skip-tag (-> test :options :skip))) (assoc test :skipped "skip requested")
-                               (every? (comp :success deref) deps) (try (exec-test-case test opts)
-                                                                        (catch Exception e
-                                                                          (log/error e "failed executing test")
-                                                                          (assoc test :error (str (or (.getMessage e) e)))))
+                               (every? (comp :success deref) deps) (exec-test-case test opts)
                                :else (assoc test :skipped "dependents failed"))
                              :done true)
                             test))))]
@@ -325,15 +331,13 @@
                [:testsuites
                 (for [{:keys [name tests total failure error skipped]} suites]
                   [:testsuite {:name name :errors error :tests total :failures failure}
-                   (for [test tests]
+                   (for [test tests :let [req-log (delay [:-cdata (print-http-message test (:resp test))])]]
                      [:testcase {:name (:test test) :classname src-file :time (:time test)}
                       (condp test nil
-                        :error :>> #(vector :error {:message %})
-                        :failure :>> #(vector :failure {:message %}
-                                              [:-cdata (print-http-message test (:resp test))])
+                        :error :>> #(vector :error {:message %} @req-log)
+                        :failure :>> #(vector :failure {:message %} @req-log)
                         :skipped [:skipped]
-                        :success (if (opts "report.http-log")
-                                   [:-cdata (print-http-message test (:resp test))])
+                        :success (if (opts "report.http-log") @req-log)
                         nil)])])])
               out))))
 
