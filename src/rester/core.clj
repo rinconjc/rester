@@ -38,6 +38,7 @@
                           "hour" Calendar/HOUR "hours" Calendar/HOUR
                           "min" Calendar/MINUTE "mins" Calendar/MINUTE
                           "sec" Calendar/SECOND "secs" Calendar/SECOND})
+(def socket-timeout (Integer/parseInt (or (System/getenv "SOCK_TIMEOUT") "60000")))
 
 (defn- eval-date-exp [cal [num name]]
   (.add cal (date-fields name Calendar/DATE) num))
@@ -145,7 +146,8 @@
          (log/error e "failed coercing payload" payload)
          payload)))
 
-(def conn-mgr (delay (make-reusable-conn-manager {:insecure? true})))
+(def conn-mgr (delay (make-reusable-conn-manager
+                      {:insecure? true})))
 
 (defn mk-request [{:keys[test url verb headers params payload] :as  req}]
   (log/info "executing" test ": " verb " " url)
@@ -158,7 +160,8 @@
                          :body (if (string? payload) payload
                                    (and (seq payload) (json/generate-string payload)))
                          :insecure? true
-                         :connection-manager @conn-mgr})
+                         :connection-manager @conn-mgr
+                         :socket-timeout socket-timeout})
         (catch ExceptionInfo e
           (.getData e)))
       (#(update % :body coerce-payload (get-in % [:headers "Content-Type"])))))
