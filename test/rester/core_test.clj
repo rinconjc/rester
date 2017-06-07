@@ -1,7 +1,9 @@
 (ns rester.core-test
   (:require [clojure.data.xml :refer [parse-str sexp-as-element]]
             [clojure.test :refer :all]
-            [rester.core :refer :all])
+            [rester.core
+             :refer
+             [cyclic? diff* extract-data parse-date-exp str->map]])
   (:import java.text.SimpleDateFormat
            java.util.Date))
 
