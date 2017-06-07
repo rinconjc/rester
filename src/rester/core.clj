@@ -38,7 +38,6 @@
                           "hour" Calendar/HOUR "hours" Calendar/HOUR
                           "min" Calendar/MINUTE "mins" Calendar/MINUTE
                           "sec" Calendar/SECOND "secs" Calendar/SECOND})
-(def socket-timeout (Integer/parseInt (or (System/getenv "SOCK_TIMEOUT") "60000")))
 
 (defn- eval-date-exp [cal [num name]]
   (.add cal (date-fields name Calendar/DATE) num))
@@ -146,8 +145,7 @@
          (log/error e "failed coercing payload" payload)
          payload)))
 
-(def conn-mgr (delay (make-reusable-conn-manager
-                      {:insecure? true})))
+(def conn-mgr (delay (make-reusable-conn-manager {:insecure? true})))
 
 (defn mk-request [{:keys[test url verb headers params payload] :as  req}]
   (log/info "executing" test ": " verb " " url)
@@ -160,8 +158,7 @@
                          :body (if (string? payload) payload
                                    (and (seq payload) (json/generate-string payload)))
                          :insecure? true
-                         :connection-manager @conn-mgr
-                         :socket-timeout socket-timeout})
+                         :connection-manager @conn-mgr})
         (catch ExceptionInfo e
           (.getData e)))
       (#(update % :body coerce-payload (get-in % [:headers "Content-Type"])))))
@@ -234,7 +231,10 @@
 
 (defn prepare-test [{:keys[exp-headers exp-body options] :as test} opts]
   (try
-    (let [options (into #{} (for [opt (str/split options #"\s*,\s*")] (keyword (str/lower-case opt))))
+    (let [options (into {} (for [opt (str/split options #"\s*,\s*")
+                                 :let[[_ key _ _ value] (re-find #"\s*([^:=]+)((:|=)([^\s]+))?\s*" opt) ]
+                                 :when key]
+                             [(keyword (str/lower-case key)) (or value :true)]))
           exp-headers (str->map exp-headers #":")
           exp-body (if-not (str/blank? exp-body)
                      (coerce-payload (replace-opts exp-body opts) (or (get exp-headers "Content-Type") "")))]
@@ -267,17 +267,26 @@
 (defn exec-tests [tests opts]
   (let [opts (atom opts)
         skip-tag (:skip opts)
+        name-to-test (into {} (for [t tests] [(:test t) t]))
         p (promise)
         count-down (atom (count tests))
         test-agents (vec (map agent tests))
-        exec-test (fn[test]
+        exec-test (fn [test]
                     (if (:done test) test
-                        (let [deps (map #(nth test-agents %) (:deps test))]
+                        (let [{:keys [deps before after skip ignore]} test
+                              deps (map #(nth test-agents %) deps)]
                           (if (every? (comp :done deref) deps)
                             (assoc
                              (cond
-                               (and skip-tag (= skip-tag (-> test :options :skip))) (assoc test :skipped "skip requested")
-                               (every? (comp :success deref) deps) (exec-test-case test opts)
+                               (and skip-tag (= skip-tag skip)) (assoc test :skipped "skip requested")
+                               (true? ignore) (assoc test :skipped "ignored")
+                               (every? (comp :success deref) deps)
+                               (let [_ (if before (doseq [t (map name-to-test (str/split before #";"))]
+                                                    (if t (exec-test-case t opts))))
+                                     executed (exec-test-case test opts)
+                                     _ (if after (doseq [t (map name-to-test (str/split after #";"))]
+                                                 (if t (exec-test-case t opts))))]
+                                 executed)
                                :else (assoc test :skipped "dependents failed"))
                              :done true)
                             test))))]
@@ -344,24 +353,29 @@
                         nil)])])])
               out))))
 
-(defn -main
-  "Executes HTTP requests specified in the argument provided spreadsheet."
-  [& args]
-  (when-not (seq args)
-    (println "Usage: \njava -jar rester-0.1.0-beta2.jar <rest-test-cases.csv> [placeholder replacements as :placeholder-name value]
-or
-lein run -m rester.core <rest-test-cases.csv> [placeholder replacements as :placeholder-name value]")
-    (System/exit 1))
+(defn- to-opts [args]
+  (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) args)))
 
+(defn run-tests [args]
   (let [pool-size (Integer/parseInt (or (System/getProperty "thread-pool-size") "4"))]
     (log/info "thread pool size:" pool-size)
     (set-agent-send-executor! (Executors/newFixedThreadPool pool-size))
     (set-agent-send-off-executor! (Executors/newFixedThreadPool pool-size)))
   (try
-    (let [opts (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) (rest args)))
+    (let [opts (to-opts (rest args))
           tests-file (first args)
           results (-> tests-file (tests-from (opts "sheet")) (exec-tests opts) summarise-results)]
       ((juxt #(junit-report opts tests-file %) print-test-results) results)
       (System/exit (- (results :total 0) (results :success 0))))
     (finally
       (shutdown-agents))))
+
+(defn -main
+  "Executes HTTP requests specified in the argument provided spreadsheet."
+  [& args]
+  (when-not (seq args)
+    (println "Usage: \njava -jar rester-0.1.0-beta2.jar <command> <rest-test-cases.csv> [placeholder replacements as :placeholder-name value]
+or
+lein run -m rester.core <rest-test-cases.csv> [placeholder replacements as :placeholder-name value]")
+    (System/exit 1))
+  (run-tests args))
