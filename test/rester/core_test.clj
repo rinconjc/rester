@@ -3,7 +3,7 @@
             [clojure.test :refer :all]
             [rester.core
              :refer
-             [cyclic? diff* extract-data parse-date-exp str->map]])
+             [cyclic? diff* extract-data parse-date-exp parse-options str->map]])
   (:import java.text.SimpleDateFormat
            java.util.Date))
 
@@ -66,3 +66,7 @@
       (is (= today (parse-date-exp "today")))
       (is (= (parse-date-exp "tomorrow") (parse-date-exp "today+1day")))
       (is (= (parse-date-exp "today") (parse-date-exp "today +2days -2days"))))))
+
+(deftest test-parse-options
+  (testing "options"
+    (is (= {:before "test1"} (parse-options "before = test1")))))
