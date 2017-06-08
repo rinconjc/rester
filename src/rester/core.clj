@@ -217,25 +217,28 @@
   (with-open [in-file (io/reader file)]
     (doall (rest (csv/read-csv in-file)))))
 
+(defn parse-options [options]
+  (into {} (for [opt (str/split options #"\s*,\s*")
+                 :let[[_ key _ _ value] (re-find #"\s*([^:=\s]+)\s*((:|=)\s*([^\s]+))?\s*" opt) ]
+                 :when key]
+             [(keyword (str/lower-case key)) (or value true)])))
+
 (defn tests-from [file sheet]
   (let [tests (->> (map #(zipmap fields %) (read-rows file sheet))
                    (filter #(not (str/blank? (:test %))))
                    (map-indexed #(-> %2 (assoc :placeholders (placeholders-of %2) :id %1)
                                      (update :extractions str->map #"\s*=\s*"))))
         extractors (for [t tests :when (:extractions t)] [(:id t) (map first (:extractions t))])
-        tests (map (fn [{:keys[placeholders] :as test}]
+        tests (map (fn [{:keys[placeholders options] :as test}]
                      (assoc test :deps (for [[i extractions] extractors
-                                             :when (some placeholders extractions)] i))) tests)
+                                             :when (some placeholders extractions)] i)
+                            :options (parse-options options))) tests)
         tests-with-deps (into {} (filter #(if (:deps %) [(:id %) (:deps %)]) tests))]
     (map #(if (cyclic? tests-with-deps (:id %)) (assoc % :error "circular dependency") %) tests)))
 
 (defn prepare-test [{:keys[exp-headers exp-body options] :as test} opts]
   (try
-    (let [options (into {} (for [opt (str/split options #"\s*,\s*")
-                                 :let[[_ key _ _ value] (re-find #"\s*([^:=]+)((:|=)([^\s]+))?\s*" opt) ]
-                                 :when key]
-                             [(keyword (str/lower-case key)) (or value :true)]))
-          exp-headers (str->map exp-headers #":")
+    (let [exp-headers (str->map exp-headers #":")
           exp-body (if-not (str/blank? exp-body)
                      (coerce-payload (replace-opts exp-body opts) (or (get exp-headers "Content-Type") "")))]
       (-> test (update :url replace-opts opts)
@@ -273,20 +276,23 @@
         test-agents (vec (map agent tests))
         exec-test (fn [test]
                     (if (:done test) test
-                        (let [{:keys [deps before after skip ignore]} test
-                              deps (map #(nth test-agents %) deps)]
+                        (let [{:keys [before after skip ignore]} (:options test)
+                              deps (map #(nth test-agents %) (:deps test))]
                           (if (every? (comp :done deref) deps)
                             (assoc
                              (cond
                                (and skip-tag (= skip-tag skip)) (assoc test :skipped "skip requested")
-                               (true? ignore) (assoc test :skipped "ignored")
+                               (true? ignore) (assoc test :ignored "ignored")
                                (every? (comp :success deref) deps)
-                               (let [_ (if before (doseq [t (map name-to-test (str/split before #";"))]
-                                                    (if t (exec-test-case t opts))))
-                                     executed (exec-test-case test opts)
-                                     _ (if after (doseq [t (map name-to-test (str/split after #";"))]
-                                                 (if t (exec-test-case t opts))))]
-                                 executed)
+                               (try
+                                 (if before (doseq [t (map name-to-test (str/split before #";"))]
+                                              (if t (exec-test-case t opts))))
+                                 (exec-test-case test opts)
+                                 (catch Exception e
+                                   (log/error "before test failed:" e))
+                                 (finally
+                                   (if after (doseq [t (map name-to-test (str/split after #";"))]
+                                               (if t (exec-test-case t opts))))))
                                :else (assoc test :skipped "dependents failed"))
                              :done true)
                             test))))]
@@ -299,7 +305,9 @@
       (add-watch (nth test-agents i) [(:id @a) i] (fn [k r o n] (send-off a exec-test))))
     (doseq [a test-agents]
       (add-watch a [(:id @a)] (fn [k r o n]
-                                (if (and (:done n) (not (:done o))) (swap! count-down dec))))
+                                (when (and (:done n) (not (:done o)))
+                                  (swap! count-down dec)
+                                  (println "completed:" (:id n)))))
       (send-off a exec-test))
     @p))
 
@@ -331,7 +339,10 @@
     (println (:name suite))
     (doseq [test (:tests suite)
             :let [result (some #(if-let [v (% test)] (str % " " v)) [:error :failure :skipped])]]
-      (print (if (:success test) "\u001B[32m [v] " "\u001B[31m [x] "))
+      (print (cond
+               (:success test) "\u001B[32m [v] "
+               (:ignored test) "\u001B[32m [_] "
+               :true "\u001B[31m [x] "))
       (println (:test test) "\t" (or result :success) "\u001B[0m"))))
 
 (defn junit-report [opts src-file {:keys [suites]}]
@@ -349,6 +360,7 @@
                         :error :>> #(vector :error {:message %} @req-log)
                         :failure :>> #(vector :failure {:message %} @req-log)
                         :skipped [:skipped]
+                        :ignored [:skipped]
                         :success (if (opts "report.http-log") @req-log)
                         nil)])])])
               out))))
