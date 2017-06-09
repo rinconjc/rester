@@ -378,7 +378,7 @@
           tests-file (first args)
           results (-> tests-file (tests-from (opts "sheet")) (exec-tests opts) summarise-results)]
       ((juxt #(junit-report opts tests-file %) print-test-results) results)
-      (System/exit (- (results :total 0) (results :success 0))))
+      (System/exit (+ (get results :error 0) (get results :failure 0))))
     (finally
       (shutdown-agents))))
 
