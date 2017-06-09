@@ -312,7 +312,7 @@
     @p))
 
 (defn summarise-results [tests]
-  (let [result-keys {:error 0 :failure 0 :success 0 :skipped 0 :total 0}
+  (let [result-keys {:error 0 :failure 0 :success 0 :skipped 0 :ignored 0 :total 0}
         add-results (fn [r1 r2]
                       (into {} (for [k (keys result-keys)]
                                  [k (+ (r1 k 0) (r2 k 0))])))]
@@ -331,10 +331,10 @@
                                result-keys (:tests suite)))))
          (#(assoc (reduce add-results %) :suites %)))))
 
-(defn print-test-results [{:keys[suites total failure error]}]
+(defn print-test-results [{:keys[suites total failure error skipped ignored]}]
   (flush)
   (println "=============================================================")
-  (println "Test cases:" total ", failed:" failure)
+  (println "Test cases:" total ", failed:" failure ", skipped:" skipped ", ignored:" ignored)
   (doseq [suite suites]
     (println (:name suite))
     (doseq [test (:tests suite)
