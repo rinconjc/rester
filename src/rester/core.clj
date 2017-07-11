@@ -1,19 +1,16 @@
 (ns rester.core
   (:gen-class)
-  (:require [cheshire
-             [core :as json]
-             [factory :as factory]]
-            [clj-http
-             [client :as client]
-             [conn-mgr :refer [make-reusable-conn-manager]]]
-            [clojure
-             [core :refer [set-agent-send-executor!]]
-             [set :refer [union]]
-             [string :as str]]
-            [clojure.data
-             [csv :as csv]
-             [xml :refer [emit-str indent parse-str sexp-as-element]]]
+  (:require [cheshire.core :as json]
+            [cheshire.factory :as factory]
+            [clj-http.client :as client]
+            [clj-http.conn-mgr :refer [make-reusable-conn-manager]]
+            [clojure.core :refer [set-agent-send-executor!]]
+            [clojure.core.async :as async :refer [>! <! chan]]
+            [clojure.data.csv :as csv]
+            [clojure.data.xml :refer [emit-str indent parse-str sexp-as-element]]
             [clojure.java.io :as io :refer [make-parents writer]]
+            [clojure.set :refer [union]]
+            [clojure.string :as str]
             [clojure.tools.logging :as log]
             [dk.ative.docjure.spreadsheet
              :refer
@@ -27,7 +24,7 @@
            java.util.concurrent.Executors))
 
 (def ^:const fields [:suite :test :url :verb :headers :payload :params :exp-status :exp-body
-                     :exp-headers :options :extractions])
+                     :exp-headers :options :extractions :priority])
 
 (def ^:const placeholder-pattern #"\$(\p{Alpha}[^\$]*)\$")
 (def ^:const date-operand-pattern #"\s*(\+|-)\s*(\d+)\s*(\p{Alpha}+)")
@@ -271,6 +268,7 @@
   (let [opts (atom opts)
         skip-tag (:skip opts)
         name-to-test (into {} (for [t tests] [(:test t) t]))
+        all-tests (atom (array-map :pending tests))
         p (promise)
         count-down (atom (count tests))
         test-agents (vec (map agent tests))
@@ -296,6 +294,20 @@
                                :else (assoc test :skipped "dependents failed"))
                              :done true)
                             test))))]
+
+    (doseq [[priority tests] (sort-by first (group-by :priority tests)) :let [exec-ch (chan)]]
+      (doseq [t tests] (go (>! exec-ch t)))
+      (go-loop [t (<! exec-ch) result (exec-test-case t)]
+        (cond (:done result) (swap! all-tests update :done assoc (:id t) result)
+              (:waiting result) (>! exec-ch t)))
+      (doseq [t tests]
+        (go ))
+      (go (loop [t (<! exec-ch)]
+            (if (= :done t))))
+      (doseq [t (<! exec-ch) :let ]
+        )
+      (let [exec-ch (chan)]
+        (async/go )))
 
     (add-watch count-down :key (fn [k r o n]
                                  (when (zero? n)
