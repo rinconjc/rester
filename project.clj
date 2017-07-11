@@ -11,8 +11,7 @@
                  [cheshire "5.6.1"]
                  [org.clojure/data.xml "0.0.8"]
                  [json-path "0.2.0"]
-                 [dk.ative/docjure "1.10.0"]
-                 [org.clojure/core.async "0.3.443"]]
+                 [dk.ative/docjure "1.10.0"]]
   :main ^:skip-aot rester.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}}

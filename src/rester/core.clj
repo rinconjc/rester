@@ -1,16 +1,19 @@
 (ns rester.core
   (:gen-class)
-  (:require [cheshire.core :as json]
-            [cheshire.factory :as factory]
-            [clj-http.client :as client]
-            [clj-http.conn-mgr :refer [make-reusable-conn-manager]]
-            [clojure.core :refer [set-agent-send-executor!]]
-            [clojure.core.async :as async :refer [>! <! chan]]
-            [clojure.data.csv :as csv]
-            [clojure.data.xml :refer [emit-str indent parse-str sexp-as-element]]
+  (:require [cheshire
+             [core :as json]
+             [factory :as factory]]
+            [clj-http
+             [client :as client]
+             [conn-mgr :refer [make-reusable-conn-manager]]]
+            [clojure
+             [core :refer [set-agent-send-executor!]]
+             [set :refer [union]]
+             [string :as str]]
+            [clojure.data
+             [csv :as csv]
+             [xml :refer [emit-str indent parse-str sexp-as-element]]]
             [clojure.java.io :as io :refer [make-parents writer]]
-            [clojure.set :refer [union]]
-            [clojure.string :as str]
             [clojure.tools.logging :as log]
             [dk.ative.docjure.spreadsheet
              :refer
@@ -268,9 +271,6 @@
   (let [opts (atom opts)
         skip-tag (:skip opts)
         name-to-test (into {} (for [t tests] [(:test t) t]))
-        all-tests (atom (array-map :pending tests))
-        p (promise)
-        count-down (atom (count tests))
         test-agents (vec (map agent tests))
         exec-test (fn [test]
                     (if (:done test) test
@@ -295,33 +295,23 @@
                              :done true)
                             test))))]
 
-    (doseq [[priority tests] (sort-by first (group-by :priority tests)) :let [exec-ch (chan)]]
-      (doseq [t tests] (go (>! exec-ch t)))
-      (go-loop [t (<! exec-ch) result (exec-test-case t)]
-        (cond (:done result) (swap! all-tests update :done assoc (:id t) result)
-              (:waiting result) (>! exec-ch t)))
-      (doseq [t tests]
-        (go ))
-      (go (loop [t (<! exec-ch)]
-            (if (= :done t))))
-      (doseq [t (<! exec-ch) :let ]
-        )
-      (let [exec-ch (chan)]
-        (async/go )))
-
-    (add-watch count-down :key (fn [k r o n]
-                                 (when (zero? n)
-                                   (log/info "execution complete!")
-                                   (deliver p (map deref test-agents)))))
-    (doseq [a test-agents i (:deps @a)]
-      (add-watch (nth test-agents i) [(:id @a) i] (fn [k r o n] (send-off a exec-test))))
-    (doseq [a test-agents]
-      (add-watch a [(:id @a)] (fn [k r o n]
-                                (when (and (:done n) (not (:done o)))
-                                  (swap! count-down dec)
-                                  (println "completed:" (:id n)))))
-      (send-off a exec-test))
-    @p))
+    (doseq [[priority test-agents] (sort-by first (group-by (comp :priority deref) test-agents))
+            :let [count-down (atom (count test-agents))
+                  p (promise)]]
+      (add-watch count-down :key (fn [k r o n]
+                                   (when (zero? n)
+                                     (log/info "execution complete!")
+                                     (deliver p :done))))
+      (doseq [a test-agents i (:deps @a)]
+        (add-watch (nth test-agents i) [(:id @a) i] (fn [k r o n] (send-off a exec-test))))
+      (doseq [a test-agents]
+        (add-watch a [(:id @a)]
+                   (fn [k r o n] (when (and (:done n) (not (:done o)))
+                                   (swap! count-down dec)
+                                   (println "completed:" (:id n)))))
+        (send-off a exec-test))
+      @p)
+    (map deref test-agents)))
 
 (defn summarise-results [tests]
   (let [result-keys {:error 0 :failure 0 :success 0 :skipped 0 :ignored 0 :total 0}
