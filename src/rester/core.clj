@@ -295,16 +295,16 @@
                              :done true)
                             test))))]
 
-    (doseq [[priority test-agents] (sort-by first (group-by (comp :priority deref) test-agents))
-            :let [count-down (atom (count test-agents))
+    (doseq [[priority agents] (sort-by first (group-by (comp :priority deref) test-agents))
+            :let [count-down (atom (count agents))
                   p (promise)]]
       (add-watch count-down :key (fn [k r o n]
                                    (when (zero? n)
                                      (log/info "execution complete!")
                                      (deliver p :done))))
-      (doseq [a test-agents i (:deps @a)]
-        (add-watch (nth test-agents i) [(:id @a) i] (fn [k r o n] (send-off a exec-test))))
-      (doseq [a test-agents]
+      (doseq [a agents dep (:deps @a)]
+        (add-watch (nth test-agents dep) [(:id @a) dep] (fn [k r o n] (send-off a exec-test))))
+      (doseq [a agents]
         (add-watch a [(:id @a)]
                    (fn [k r o n] (when (and (:done n) (not (:done o)))
                                    (swap! count-down dec)
