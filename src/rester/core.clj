@@ -268,8 +268,8 @@
             (assoc test :error (str (or (.getMessage e) e))))))))
 
 (defn exec-tests [tests opts]
-  (let [opts (atom opts)
-        skip-tag (opts "skip")
+  (let [skip-tag (opts "skip")
+        opts (atom opts)
         name-to-test (into {} (for [t tests] [(:test t) t]))
         test-agents (vec (map agent tests))
         exec-test (fn [test]
@@ -279,7 +279,7 @@
                           (if (every? (comp :done deref) deps)
                             (assoc
                              (cond
-                               (and skip-tag (= skip-tag skip)) (assoc test :skipped "skip requested")
+                               (and skip-tag (= skip-tag skip)) (assoc test :ignored "skip requested")
                                (true? ignore) (assoc test :ignored "ignored")
                                (every? (comp :success deref) deps)
                                (try
