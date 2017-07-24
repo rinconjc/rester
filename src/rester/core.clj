@@ -269,7 +269,7 @@
 
 (defn exec-tests [tests opts]
   (let [opts (atom opts)
-        skip-tag (:skip opts)
+        skip-tag (opts "skip")
         name-to-test (into {} (for [t tests] [(:test t) t]))
         test-agents (vec (map agent tests))
         exec-test (fn [test]
