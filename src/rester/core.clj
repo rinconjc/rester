@@ -18,7 +18,8 @@
             [dk.ative.docjure.spreadsheet
              :refer
              [load-workbook read-cell row-seq select-sheet sheet-seq]]
-            [json-path :refer [at-path]])
+            [json-path :refer [at-path]]
+            [clojure.set :as set])
   (:import [clojure.data.xml CData Element]
            clojure.lang.ExceptionInfo
            java.lang.Integer
@@ -268,8 +269,8 @@
             (assoc test :error (str (or (.getMessage e) e))))))))
 
 (defn exec-tests [tests opts]
-  (let [opts (atom opts)
-        skip-tag (:skip opts)
+  (let [skip-tag (opts "skip")
+        opts (atom opts)
         name-to-test (into {} (for [t tests] [(:test t) t]))
         test-agents (vec (map agent tests))
         exec-test (fn [test]
@@ -279,7 +280,7 @@
                           (if (every? (comp :done deref) deps)
                             (assoc
                              (cond
-                               (and skip-tag (= skip-tag skip)) (assoc test :skipped "skip requested")
+                               (and skip-tag (= skip-tag skip)) (assoc test :ignored "skip requested")
                                (true? ignore) (assoc test :ignored "ignored")
                                (every? (comp :success deref) deps)
                                (try
@@ -312,6 +313,12 @@
         (send-off a exec-test))
       @p)
     (map deref test-agents)))
+
+(defn suites [tests]
+  (reduce (fn [suites test]
+            (if (str/blank? (:suite test))
+              (update suites (dec (count suites)) update :tests conj test)
+              (conj suites {:name (:suite test) :tests [test]})))  [] tests))
 
 (defn summarise-results [tests]
   (let [result-keys {:error 0 :failure 0 :success 0 :skipped 0 :ignored 0 :total 0}
@@ -366,6 +373,29 @@
                         :success (if (opts "report.http-log") @req-log)
                         nil)])])])
               out))))
+
+(defn tests->postman [name tests opts]
+  (let [all-placeholders (into #{} (reduce #(concat %1 (:placeholders %2)) [] tests))
+        all-extractions (into #{} (reduce #(concat %1 (:extractions %2)) [] tests))
+        all-suites (suites tests)]
+    {:info {:name name :schema "https://schema.getpostman.com/json/collection/v2.0.0/collection.json"}
+     :variables (for [v (set/difference all-placeholders all-extractions)] {:id v :name v})
+     :item (for [{:keys [name tests]} suites]
+             {:name name
+              :item (for [t tests]
+                      {:name (:test t)
+                       :request {:url (:url t)
+                                 :method (:verb t)
+                                 :header (for [[k v] (str->map (:headers t) #":" {} false)]
+                                           {:key k :value v})
+                                 :body (:payload t)}
+                       :event (conj (for [[name path] (:extractions t)]
+                                      {:list "test"
+                                       :script (format "var resp=JSON.parse(responseBody);
+postman.setEnvironmentVariable(\"%s\", %s);
+" name (jsonpath->js path))})
+                                    {:listen "test"
+                                     :script (format "tests[\"Status code is %1$s\"] = responseCode.code === %1$s;" (:exp-status t))})})})}))
 
 (defn- to-opts [args]
   (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) args)))
