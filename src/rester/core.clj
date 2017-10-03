@@ -277,6 +277,7 @@
                     (if (:done test) test
                         (let [{:keys [before after skip ignore]} (:options test)
                               deps (map #(nth test-agents %) (:deps test))]
+                          (log/info "executing " (:id test))
                           (if (every? (comp :done deref) deps)
                             (assoc
                              (cond
@@ -297,19 +298,17 @@
                             test))))]
 
     (doseq [[priority agents] (sort-by first (group-by (comp :priority deref) test-agents))
-            :let [count-down (atom (count agents))
+            :let [pending (atom (into #{} (map (comp :id deref) agents)))
                   p (promise)]]
-      (add-watch count-down :key (fn [k r o n]
-                                   (when (zero? n)
-                                     (log/info "execution complete!")
-                                     (deliver p :done))))
       (doseq [a agents dep (:deps @a)]
-        (add-watch (nth test-agents dep) [(:id @a) dep] (fn [k r o n] (send-off a exec-test))))
+        (add-watch (nth test-agents dep) [(:id @a) dep]
+                   (fn [k r o n] (send-off a exec-test))))
       (doseq [a agents]
         (add-watch a [(:id @a)]
-                   (fn [k r o n] (when (and (:done n) (not (:done o)))
-                                   (swap! count-down dec)
-                                   (println "completed:" (:id n)))))
+                   (fn [k r o n] (when (:done n)
+                                   (if (empty? (swap! pending #(remove #{(:id n)} %1)))
+                                     (deliver p :done))
+                                   (log/debug "completed:" (:id n) " pending" @pending))))
         (send-off a exec-test))
       @p)
     (map deref test-agents)))
