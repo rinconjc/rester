@@ -245,7 +245,7 @@
                                      (or (get exp-headers "Content-Type") "")))]
       (-> test (update :url replace-opts opts)
           (update :headers str->map #":" opts false)
-          (update :headers merge (:common-headers options))
+          (update :headers merge (options "commonHeaders"))
           (update :params str->map  [#"&|(\s*,\s*)" #"\s*=\s*"] opts true)
           (update :payload #(-> % (replace-opts opts)
                                 ((if (:dont_parse_payload options) identity json->clj))))
@@ -404,13 +404,12 @@ postman.setEnvironmentVariable(\"%s\", %s);
 (defn- to-opts [args]
   (->> args
        (partition 2)
-       (reduce (fn [[result [k v]]]
+       (reduce (fn [result [k v]]
                  (let [k (if-not (.startsWith k ":")
                            (do (log/warn "argument key expected to start with :" k) k)
                            (subs k 1))]
-                   (if (.startsWith k "headers.")
-                     (update result :common-headers assoc (str/replace-first "headers." "") v)
-                     (assoc result k v)))) {})))
+                   (assoc result k v))) {})
+       ((fn[m] (update m "commonHeaders" str->map #"=")))))
 
 (defn run-tests [args]
   (let [pool-size (Integer/parseInt (or (System/getProperty "thread-pool-size") "4"))]
