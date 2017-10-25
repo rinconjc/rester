@@ -256,7 +256,8 @@
   (let [test (if (:error test) test (prepare-test test @opts))]
     (if (:error test) test
         (try
-          (let [resp (mk-request test)
+          (let [resp (mk-request (if-let [host (@opts "host")]
+                                   (update test :headers assoc :host host) test))
                 delta (verify-response resp test)
                 test (assoc test :time (/ (:request-time resp) 1000.0) :resp resp)]
             (if delta
@@ -373,6 +374,8 @@
                         nil)])])])
               out))))
 
+(defn jsonpath->js [path] path)
+
 (defn tests->postman [name tests opts]
   (let [all-placeholders (into #{} (reduce #(concat %1 (:placeholders %2)) [] tests))
         all-extractions (into #{} (reduce #(concat %1 (:extractions %2)) [] tests))
@@ -388,7 +391,7 @@
                                  :header (for [[k v] (str->map (:headers t) #":" {} false)]
                                            {:key k :value v})
                                  :body (:payload t)}
-                       :event (conj (for [[name path] (:extractions t)]
+                       :event (conj (for [[name path] []] ;; (:extractions t)
                                       {:list "test"
                                        :script (format "var resp=JSON.parse(responseBody);
 postman.setEnvironmentVariable(\"%s\", %s);
