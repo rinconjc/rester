@@ -241,11 +241,14 @@
   (try
     (let [exp-headers (str->map exp-headers #":")
           exp-body (if-not (str/blank? exp-body)
-                     (coerce-payload (replace-opts exp-body opts) (or (get exp-headers "Content-Type") "")))]
+                     (coerce-payload (replace-opts exp-body opts)
+                                     (or (get exp-headers "Content-Type") "")))]
       (-> test (update :url replace-opts opts)
           (update :headers str->map #":" opts false)
+          (update :headers merge (:common-headers options))
           (update :params str->map  [#"&|(\s*,\s*)" #"\s*=\s*"] opts true)
-          (update :payload #(-> % (replace-opts opts) ((if (:dont_parse_payload options) identity json->clj))))
+          (update :payload #(-> % (replace-opts opts)
+                                ((if (:dont_parse_payload options) identity json->clj))))
           (update :exp-status #(.intValue (Double/parseDouble %)))
           (assoc :exp-body exp-body :exp-headers exp-headers)))
     (catch Exception e
@@ -256,8 +259,7 @@
   (let [test (if (:error test) test (prepare-test test @opts))]
     (if (:error test) test
         (try
-          (let [resp (mk-request (if-let [host (@opts "host")]
-                                   (update test :headers assoc :host host) test))
+          (let [resp (mk-request test)
                 delta (verify-response resp test)
                 test (assoc test :time (/ (:request-time resp) 1000.0) :resp resp)]
             (if delta
@@ -400,7 +402,15 @@ postman.setEnvironmentVariable(\"%s\", %s);
                                      :script (format "tests[\"Status code is %1$s\"] = responseCode.code === %1$s;" (:exp-status t))})})})}))
 
 (defn- to-opts [args]
-  (apply hash-map (map-indexed #(if (even? %1) (subs %2 1) %2) args)))
+  (->> args
+       (partition 2)
+       (reduce (fn [[result [k v]]]
+                 (let [k (if-not (.startsWith k ":")
+                           (do (log/warn "argument key expected to start with :" k) k)
+                           (subs k 1))]
+                   (if (.startsWith k "headers.")
+                     (update result :common-headers assoc (str/replace-first "headers." "") v)
+                     (assoc result k v)))) {})))
 
 (defn run-tests [args]
   (let [pool-size (Integer/parseInt (or (System/getProperty "thread-pool-size") "4"))]
