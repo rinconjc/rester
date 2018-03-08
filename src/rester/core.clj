@@ -90,7 +90,7 @@
 (defn- body-to-string [body]
   (cond (instance? Element body) (emit-str body)
         (coll? body) (json/generate-string body)
-        :else body))
+        :else "(binary)"))
 
 (defn print-curl-request [req]
   (str "curl -v -X" (:verb req) " " (:url req)
@@ -143,8 +143,8 @@
          #"text" payload
          (json->clj payload))
        (catch Exception e
-         (log/error e "failed coercing payload" payload)
-         payload)))
+         (log/error e "failed coercing payload" (body-to-string payload))
+         (body-to-string payload))))
 
 (def conn-mgr (delay (make-reusable-conn-manager {:insecure? true})))
 
@@ -184,7 +184,7 @@
            (if (diff* (str/trim value) (headers header))
              (str "header " header " was " (headers header) " expected " value))) exp-headers)
    (when-let [ldiff (if exp-body (diff* exp-body body))]
-     (log/error "failed matching body. expected:" exp-body " got:" body)
+     (log/error "failed matching body. expected:" exp-body " got:" (body-to-string body))
      (->> ldiff (#(if (instance? Element %)
                     (emit-str %)
                     (json/generate-string %)))
