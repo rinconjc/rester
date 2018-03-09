@@ -90,6 +90,8 @@
 (defn- body-to-string [body]
   (cond (instance? Element body) (emit-str body)
         (coll? body) (json/generate-string body)
+        (string? body) body
+        (nil? body) ""
         :else "(binary)"))
 
 (defn print-curl-request [req]
@@ -138,13 +140,15 @@
     ldiff))
 
 (defn coerce-payload [payload content-type]
-  (try (condp re-find (or content-type "")
+  (try (condp re-find (or content-type "json")
          #"xml" (parse-str payload)
          #"text" payload
-         (json->clj payload))
+         #"json" (json->clj payload)
+         nil)
        (catch Exception e
-         (log/error e "failed coercing payload" (body-to-string payload))
-         (body-to-string payload))))
+         (let [body-str (body-to-string payload)]
+           (log/error e "failed coercing payload" body-str)
+           body-str))))
 
 (def conn-mgr (delay (make-reusable-conn-manager {:insecure? true})))
 
