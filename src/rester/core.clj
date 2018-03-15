@@ -228,9 +228,16 @@
                  :when key]
              [(keyword (str/lower-case key)) (or value true)])))
 
+(defn- to-int [s]
+  (try
+    (if (empty? s) 0
+        (Integer/parseInt s))
+    (catch Exception e 0)))
+
 (defn tests-from [file sheet]
   (let [tests (->> (map #(zipmap fields %) (read-rows file sheet))
                    (filter #(not (str/blank? (:test %))))
+                   (map #(update % :priority to-int))
                    (map-indexed #(-> %2 (assoc :placeholders (placeholders-of %2) :id %1)
                                      (update :extractions str->map #"\s*=\s*"))))
         extractors (for [t tests :when (:extractions t)] [(:id t) (map first (:extractions t))])
@@ -283,9 +290,9 @@
         exec-test (fn [test]
                     (if (:done test) test
                         (let [{:keys [before after skip ignore]} (:options test)
-                              deps (map #(nth test-agents %) (:deps test))]
-                          (log/info "executing " (:id test))
-                          (if (every? (comp :done deref) deps)
+                              deps (map #(nth test-agents %) (:deps test))
+                              pending (filter (comp not :done deref) deps)]
+                          (if (empty? pending)
                             (assoc
                              (cond
                                (and skip-tag (= skip-tag skip)) (assoc test :ignored "skip requested")
@@ -302,7 +309,9 @@
                                                (if t (exec-test-case t opts))))))
                                :else (assoc test :skipped "dependents failed"))
                              :done true)
-                            test))))]
+                            (do
+                              (log/infof "%s blocked by %s" (:id test) (str/join "," (map (comp :id deref) pending)))
+                              test)))))]
 
     (doseq [[priority agents] (sort-by first (group-by (comp :priority deref) test-agents))
             :let [pending (atom (into #{} (map (comp :id deref) agents)))
