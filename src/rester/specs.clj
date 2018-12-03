@@ -15,10 +15,10 @@
 (s/def ::suite string?)
 (s/def ::parse-body boolean?)
 (s/def ::ignore boolean?)
-
+(s/def ::id int?)
 (s/def ::body (s/or :raw ::raw-body :json ::json-body :form ::form-body))
 (s/def ::expect (s/keys :req-un [::status] :opt-un [::headers ::body]))
 (s/def ::options (s/keys :opt-un [::priority ::extractors ::parse-body ::ignore]))
 
-(s/def ::test-case (s/keys :req-un [::suite ::name ::verb ::url ::expect]
+(s/def ::test-case (s/keys :req-un [::id ::suite ::name ::verb ::url ::expect]
                            :opt-un [::body ::headers ::options]))
