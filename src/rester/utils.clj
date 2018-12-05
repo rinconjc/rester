@@ -1,15 +1,68 @@
 (ns rester.utils
-  (:require [clojure.spec.alpha :as s]
-            [rester.specs :as rs :refer [http-verbs]]
-            [yaml.core :as yaml]
+  (:require [clojure.data.csv :as csv]
+            [clojure.java.io :as io]
+            [clojure.set :refer [union]]
+            [clojure.spec.alpha :as s]
+            [clojure.string :as str]
+            [clojure.tools.logging :as log]
             [dk.ative.docjure.spreadsheet
              :refer
              [load-workbook read-cell row-seq select-sheet sheet-seq]]
-            [clojure.string :as str]))
+            [rester.specs :as rs :refer [http-verbs]]
+            [yaml.core :as yaml])
+  (:import java.text.SimpleDateFormat
+           java.util.Calendar))
 
 (def ^:const fields [:suite :name :url :verb :headers :payload :params :exp-status :exp-body
                      :exp-headers :options :extractions :priority])
 
+(def ^:const placeholder-pattern #"\$(\p{Alpha}[^\$]*)\$")
+(def ^:const date-operand-pattern #"\s*(\+|-)\s*(\d+)\s*(\p{Alpha}+)")
+(def ^:const date-exp-pattern #"(\p{Alpha}+)((\s*(\+|-)\s*\d+\s*\p{Alpha}+)*)(:(.+))?")
+(def ^:const date-fields {"days" Calendar/DATE "day" Calendar/DATE "week" Calendar/WEEK_OF_YEAR
+                          "weeks" Calendar/WEEK_OF_YEAR "year" Calendar/YEAR "years" Calendar/YEAR
+                          "month" Calendar/MONTH "months" Calendar/MONTH
+                          "hour" Calendar/HOUR "hours" Calendar/HOUR
+                          "min" Calendar/MINUTE "mins" Calendar/MINUTE
+                          "sec" Calendar/SECOND "secs" Calendar/SECOND})
+
+(defn- to-int [s]
+  (try
+    (if (empty? s) 0
+        (Integer/parseInt s))
+    (catch Exception e 0)))
+
+(defn- eval-date-exp [cal [num name]]
+  (.add cal (date-fields name Calendar/DATE) num))
+
+(defn- date-from-name [name]
+  (let [cal (Calendar/getInstance)]
+    (case name
+      "now" cal
+      "today" cal
+      "tomorrow" (do (.add cal Calendar/DATE 1) cal)
+      nil)))
+
+(defn parse-date-exp [s]
+  (if-let [[_ name operands _ _ _ fmt] (re-matches date-exp-pattern s)]
+    (if-let [cal (date-from-name name)]
+      (let [operations (for [[_ op n name] (re-seq date-operand-pattern operands)]
+                         [(* (if (= op "+") 1 -1) (Integer/parseInt n)) name])]
+        (doseq [op operations]
+          (eval-date-exp cal op))
+        (.format (SimpleDateFormat. (or fmt "yyyy-MM-dd")) (.getTime cal))))))
+
+(defn parse-options [options]
+  (into {} (for [opt (str/split options #"\s*,\s*")
+                 :let[[_ key _ _ value] (re-find #"\s*([^:=\s]+)\s*((:|=)\s*([^\s]+))?\s*" opt) ]
+                 :when key]
+             [(keyword (str/lower-case key)) (or value true)])))
+
+(defn- replace-opts [s opts]
+  (when s
+    (str/replace s placeholder-pattern
+                 #(str (or (opts (second %) (parse-date-exp (second %)))
+                           (log/error "missing argument:" (second %)) "")))))
 (defn str->map
   ([s sep] (str->map s sep {} false))
   ([s sep opts include-empty]
@@ -22,6 +75,12 @@
             (filter #(or include-empty (not (str/blank? (second %)))))
             (into {}))))))
 
+(defn parse-options [options]
+  (into {} (for [opt (str/split options #"\s*,\s*")
+                 :let[[_ key _ _ value] (re-find #"\s*([^:=\s]+)\s*((:|=)\s*([^\s]+))?\s*" opt) ]
+                 :when key]
+             [(keyword (str/lower-case key)) (or value true)])))
+
 (defn- to-test-case
   "convert yaml/json to test-case format"
   [params]
@@ -33,30 +92,35 @@
         data))
     {:error (str "missing request verb/url:" (:suite params) "/" (:name params))}))
 
+(defn- parse-test [t]
+  (-> t
+      (update :priority to-int)
+      (dissoc :exp-status :exp-body :exp-headers :extractors)
+      (assoc :expect
+             (into {} [[:status (:exp-status t)]
+                       (some->> t :exp-body not-empty (vector :body))
+                       (some->> t :exp-headers not-empty #(str->map % #":")
+                                (vector :headers))]))
+      (assoc :options
+             (into (or (some-> t :options not-empty parse-options) {})
+                   [[:priority (or (some-> t :priority not-empty to-int) 0)]
+                    (some->> t :extractors not-empty #(str->map #"\s*=\s*") (vector :extractors))]))))
+
 (defn- rows->test-cases
   "converts rows into test-cases"
   [rows]
   (loop [suite "(Ungrouped Tests)"
          id 0
-         row (first rows)
+         rows rows
          tests []]
-    (let [t (zipmap fields row)
-          suite (or (:suite t) suite)]
-      (conj tests  (-> t (assoc :suite suite :id id )
-                       (update :priority to-int)
-                       (dissoc :exp-status :exp-body :exp-headers)
-                       (assoc :expect
-                              (into {} [[:status (:exp-status t)]
-                                        (cond->> (:exp-body t)
-                                          (comp not str/blank?) (vector :body))
-                                        (cond->> (:exp-headers t)
-                                          (comp not str/blank?) #(vector :headers (str->map % #":")))]))))))
-  (for [row [rows]])
-  (->> xs (map #(zipmap fields %)))
-  (filter #(not (str/blank? (:test %))))
-  (map #(update % :priority to-int))
-
-  )
+    (if (empty? rows)
+      tests
+      (let [t (zipmap fields (first rows))
+            suite (or (:suite t) suite)
+            t (parse-test (assoc t :suite suite :id id))
+            t (if (s/valid? ::rs/test-case t) t
+                  (assoc t :invalid (s/explain-str ::rs/test-case t)))]
+        (recur suite (inc id) (rest rows) (conj tests t))))))
 
 (defn from-yaml
   "Parses tests from a yaml file"
@@ -90,7 +154,7 @@
   (with-open [in-file (io/reader file)]
     (doall (rest (csv/read-csv in-file)))))
 
-(defmethod load-tests-from :yaml [file]
+(defmethod load-tests-from :yaml [file _]
   (from-yaml file))
 
 (defn parse-options [options]
@@ -105,6 +169,9 @@
         (Integer/parseInt s))
     (catch Exception e 0)))
 
+(defn placeholders [s]
+  (set (map second (re-seq placeholder-pattern s))))
+
 (defn placeholders-of [{:keys[url headers params payload exp-body]}]
   (apply union (map placeholders [url headers params payload exp-body])))
 
@@ -115,11 +182,9 @@
        (some #(cyclic? deps % (conj visited x)) (deps x)))))
 
 (defn tests-from [file sheet]
-  (let [tests (->> (map #(zipmap fields %) (read-rows file sheet))
-                   (filter #(not (str/blank? (:test %))))
-                   (map #(update % :priority to-int))
-                   (map-indexed #(-> %2 (assoc :placeholders (placeholders-of %2) :id %1)
-                                     (update :extractions str->map #"\s*=\s*"))))
+  (let [tests (load-tests-from file sheet)
+        valid-tests (map #(assoc :placeholders (placeholders-of %))
+                         (remove :invalid tests))
         extractors (for [t tests :when (:extractions t)] [(:id t) (map first (:extractions t))])
         tests (map (fn [{:keys[placeholders options] :as test}]
                      (assoc test :deps (for [[i extractions] extractors
