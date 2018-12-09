@@ -3,7 +3,7 @@
             [clojure.test :refer :all]
             [rester.core
              :refer
-             [cyclic? diff* extract-data parse-date-exp parse-options str->map]])
+             [ diff* extract-data]])
   (:import java.text.SimpleDateFormat
            java.util.Date))
 
@@ -40,33 +40,7 @@
   (testing "diff with regex"
     (is (nil? (diff* "#\\d+" "0.01")))))
 
-(deftest test-str->map
-  (testing "simple pairs"
-    (is (= {"a" "b" "c" "d"} (str->map "a:b,c : d" #"\s*:\s*"))))
-  (testing "with missing values"
-    (is (= {"a" "b"} (str->map "c,a:b" #"\s*:\s*")))))
 
 (deftest test-extract-data
   (testing "simple json path"
     (is (= {"id" 100} (extract-data {:body {:id 100 "name" "blah"}} {"id" "$.id"})))))
-
-(deftest test-cyclic?
-  (testing "no cycles"
-    (is (nil? (cyclic? {:a [:b :c] :b [:c]} :a)))
-    (is (nil? (cyclic? {:a [:a]} :b))))
-  (testing "cycles"
-    (is (= :a (cyclic? {:a [:a]} :a)))
-    (is (= :b (cyclic? {:a [:b :c] :b [:d] :d [:f] :f [:b]} :a)))))
-
-(deftest test-date-exps
-  (testing "simple date names"
-    (let [df (SimpleDateFormat. "yyyy-MM-dd")
-          today (.format df (Date.))]
-      (is (= today (parse-date-exp "now")))
-      (is (= today (parse-date-exp "today")))
-      (is (= (parse-date-exp "tomorrow") (parse-date-exp "today+1day")))
-      (is (= (parse-date-exp "today") (parse-date-exp "today +2days -2days"))))))
-
-(deftest test-parse-options
-  (testing "options"
-    (is (= {:before "test1"} (parse-options "before = test1")))))

@@ -1,91 +1,27 @@
 (ns rester.core
   (:gen-class)
-  (:require [cheshire
-             [core :as json]
-             [factory :as factory]]
-            [clj-http
-             [client :as client]
-             [conn-mgr :refer [make-reusable-conn-manager]]]
-            [clojure
-             [core :refer [set-agent-send-executor!]]
-             [set :refer [union]]
-             [string :as str]]
-            [clojure.data
-             [csv :as csv]
-             [xml :refer [emit-str indent parse-str sexp-as-element]]]
+  (:require [cheshire.core :as json]
+            [cheshire.factory :as factory]
+            [clj-http.client :as client]
+            [clj-http.conn-mgr :refer [make-reusable-conn-manager]]
+            [clojure.core :refer [set-agent-send-executor!]]
+            [clojure.data.xml :refer [emit-str indent parse-str sexp-as-element]]
             [clojure.java.io :as io :refer [make-parents writer]]
+            [clojure.set :as set]
+            [clojure.string :as str]
             [clojure.tools.logging :as log]
-            [dk.ative.docjure.spreadsheet
-             :refer
-             [load-workbook read-cell row-seq select-sheet sheet-seq]]
             [json-path :refer [at-path]]
-            [clojure.set :as set])
+            [rester.utils :refer [load-tests replace-opts str->map]])
   (:import [clojure.data.xml CData Element]
            clojure.lang.ExceptionInfo
            java.lang.Integer
-           java.text.SimpleDateFormat
-           java.util.Calendar
            java.util.concurrent.Executors))
-
-(def ^:const fields [:suite :test :url :verb :headers :payload :params :exp-status :exp-body
-                     :exp-headers :options :extractions :priority])
-
-(def ^:const placeholder-pattern #"\$(\p{Alpha}[^\$]*)\$")
-(def ^:const date-operand-pattern #"\s*(\+|-)\s*(\d+)\s*(\p{Alpha}+)")
-(def ^:const date-exp-pattern #"(\p{Alpha}+)((\s*(\+|-)\s*\d+\s*\p{Alpha}+)*)(:(.+))?")
-(def ^:const date-fields {"days" Calendar/DATE "day" Calendar/DATE "week" Calendar/WEEK_OF_YEAR
-                          "weeks" Calendar/WEEK_OF_YEAR "year" Calendar/YEAR "years" Calendar/YEAR
-                          "month" Calendar/MONTH "months" Calendar/MONTH
-                          "hour" Calendar/HOUR "hours" Calendar/HOUR
-                          "min" Calendar/MINUTE "mins" Calendar/MINUTE
-                          "sec" Calendar/SECOND "secs" Calendar/SECOND})
-
-(defn- eval-date-exp [cal [num name]]
-  (.add cal (date-fields name Calendar/DATE) num))
-
-(defn- date-from-name [name]
-  (let [cal (Calendar/getInstance)]
-    (case name
-      "now" cal
-      "today" cal
-      "tomorrow" (do (.add cal Calendar/DATE 1) cal)
-      nil)))
-
-(defn parse-date-exp [s]
-  (if-let [[_ name operands _ _ _ fmt] (re-matches date-exp-pattern s)]
-    (if-let [cal (date-from-name name)]
-      (let [operations (for [[_ op n name] (re-seq date-operand-pattern operands)]
-                         [(* (if (= op "+") 1 -1) (Integer/parseInt n)) name])]
-        (doseq [op operations]
-          (eval-date-exp cal op))
-        (.format (SimpleDateFormat. (or fmt "yyyy-MM-dd")) (.getTime cal))))))
-
-(defn placeholders [s]
-  (set (map second (re-seq placeholder-pattern s))))
-
-(defn- replace-opts [s opts]
-  (if s
-    (str/replace s placeholder-pattern
-                 #(str (or (opts (second %) (parse-date-exp (second %)))
-                           (log/error "missing argument:" (second %)) "")))))
 
 (defn json->clj [json-str]
   (if-not (str/blank? json-str)
     (binding [factory/*json-factory* (factory/make-json-factory
                                       {:allow-unquoted-field-names true})]
       (json/parse-string json-str true))))
-
-(defn str->map
-  ([s sep] (str->map s sep {} false))
-  ([s sep opts include-empty]
-   (if-not (str/blank? s)
-     (let [[sep1 sep] (if (vector? sep) sep [#"\s*,\s*" sep])]
-       (->> (str/split s sep1)
-            (map #(let [[k v] (str/split % sep 2)
-                        v (or v (log/warn "missing key or value in " k))]
-                    [k (replace-opts v opts)]))
-            (filter #(or include-empty (not (str/blank? (second %)))))
-            (into {}))))))
 
 (defn- body-to-string [body]
   (cond (instance? Element body) (emit-str body)
@@ -194,66 +130,13 @@
                     (json/generate-string %)))
           (str "expected body missing:" )))))
 
-(defn placeholders-of [{:keys[url headers params payload exp-body]}]
-  (apply union (map placeholders [url headers params payload exp-body])))
-
-(defn cyclic?
-  ([deps x] (cyclic? deps x #{}))
-  ([deps x visited]
-   (or (and (visited x) x)
-       (some #(cyclic? deps % (conj visited x)) (deps x)))))
-
-(defmulti read-rows (fn [file _]
-                      (cond
-                        (str/ends-with? file ".csv") :csv
-                        (str/ends-with? file ".xlsx") :excel)))
-
-(defmethod read-rows :excel [file sheet]
-  (let [wk-book (load-workbook file)
-        wk-sheet (cond
-                   (string? sheet) (select-sheet sheet wk-book)
-                   :else (-> wk-book sheet-seq first))]
-    (into [] (->> wk-sheet row-seq
-                  (map #(map (fn[i] (if-let [c (.getCell % i)] (str (read-cell c)) ""))
-                             (range (count fields))))
-                  rest))))
-
-(defmethod read-rows :csv [file _]
-  (with-open [in-file (io/reader file)]
-    (doall (rest (csv/read-csv in-file)))))
-
-(defn parse-options [options]
-  (into {} (for [opt (str/split options #"\s*,\s*")
-                 :let[[_ key _ _ value] (re-find #"\s*([^:=\s]+)\s*((:|=)\s*([^\s]+))?\s*" opt) ]
-                 :when key]
-             [(keyword (str/lower-case key)) (or value true)])))
-
-(defn- to-int [s]
+(defn prepare-test [{:keys[expect options] :as test} opts]
   (try
-    (if (empty? s) 0
-        (Integer/parseInt s))
-    (catch Exception e 0)))
-
-(defn tests-from [file sheet]
-  (let [tests (->> (map #(zipmap fields %) (read-rows file sheet))
-                   (filter #(not (str/blank? (:test %))))
-                   (map #(update % :priority to-int))
-                   (map-indexed #(-> %2 (assoc :placeholders (placeholders-of %2) :id %1)
-                                     (update :extractions str->map #"\s*=\s*"))))
-        extractors (for [t tests :when (:extractions t)] [(:id t) (map first (:extractions t))])
-        tests (map (fn [{:keys[placeholders options] :as test}]
-                     (assoc test :deps (for [[i extractions] extractors
-                                             :when (some placeholders extractions)] i)
-                            :options (parse-options options))) tests)
-        tests-with-deps (into {} (filter #(if (:deps %) [(:id %) (:deps %)]) tests))]
-    (map #(if (cyclic? tests-with-deps (:id %)) (assoc % :error "circular dependency") %) tests)))
-
-(defn prepare-test [{:keys[exp-headers exp-body options] :as test} opts]
-  (try
-    (let [exp-headers (str->map exp-headers #":")
-          exp-body (if-not (str/blank? exp-body)
-                     (coerce-payload (replace-opts exp-body opts)
-                                     (or (get exp-headers "Content-Type") "")))]
+    (let [exp-headers (:headers expect)
+          exp-body (some-> (:body expect)
+                           not-empty
+                           (replace-opts opts)
+                           (coerce-payload (or (get exp-headers "Content-Type") "")))]
       (-> test (update :url replace-opts opts)
           (update :headers str->map #":" opts false)
           (update :headers merge (opts "commonHeaders"))
@@ -433,7 +316,7 @@ postman.setEnvironmentVariable(\"%s\", %s);
   (try
     (let [opts (to-opts (rest args))
           tests-file (first args)
-          results (-> tests-file (tests-from (opts "sheet")) (exec-tests opts) summarise-results)]
+          results (-> tests-file (load-tests (opts "sheet")) (exec-tests opts) summarise-results)]
       ((juxt #(junit-report opts tests-file %) print-test-results) results)
       (System/exit (+ (get results :error 0) (get results :failure 0))))
     (finally
