@@ -1,5 +1,7 @@
 (ns rester.utils
-  (:require [clojure.data.csv :as csv]
+  (:require [cheshire.core :as json]
+            [cheshire.factory :as factory]
+            [clojure.data.csv :as csv]
             [clojure.java.io :as io]
             [clojure.set :refer [union]]
             [clojure.spec.alpha :as s]
@@ -10,7 +12,8 @@
              [load-workbook read-cell row-seq select-sheet sheet-seq]]
             [rester.specs :as rs :refer [http-verbs]]
             [yaml.core :as yaml])
-  (:import java.text.SimpleDateFormat
+  (:import java.lang.Exception
+           java.text.SimpleDateFormat
            java.util.Calendar))
 
 (def ^:const fields [:suite :name :url :verb :headers :payload :params :exp-status :exp-body
@@ -58,11 +61,12 @@
                  :when key]
              [(keyword (str/lower-case key)) (or value true)])))
 
-(defn- replace-opts [s opts]
+(defn replace-opts [s opts]
   (when s
     (str/replace s placeholder-pattern
                  #(str (or (opts (second %) (parse-date-exp (second %)))
                            (log/error "missing argument:" (second %)) "")))))
+
 (defn str->map
   ([s sep] (str->map s sep {} false))
   ([s sep opts include-empty]
@@ -169,26 +173,59 @@
         (Integer/parseInt s))
     (catch Exception e 0)))
 
-(defn placeholders [s]
+(defn parse-vars [s]
   (set (map second (re-seq placeholder-pattern s))))
 
-(defn placeholders-of [{:keys[url headers params payload exp-body]}]
-  (apply union (map placeholders [url headers params payload exp-body])))
+(defn vars-in [{:keys[url headers params body expect]}]
+  (->> [url (vals headers) (vals params)
+        body (:body expect) (vals (:headers expect))]
+       flatten
+       (map parse-vars)
+       (apply union)))
 
 (defn cyclic?
   ([deps x] (cyclic? deps x #{}))
   ([deps x visited]
-   (or (and (visited x) x)
+   (if (visited x) x
        (some #(cyclic? deps % (conj visited x)) (deps x)))))
 
-(defn tests-from [file sheet]
+;; (defn exec-order [tests]
+;;   (loop [adjs (->> tests
+;;                    (mapcat #(for [d (:deps %)] [d (:id %)]))
+;;                    (reduce #(update %1 (first %2) conj (second %2)) {}))
+;;          nodes (into {} (for [t tests]
+;;                           [(:id t) {:test t :in-degree (count (:deps t))}]))
+;;          ts (filter #(= 0 (:in-degree (second %))) nodes)
+;;          leftover (count tests)
+;;          result []]
+;;     (when (and (empty? ts) (pos? leftover))
+;;       (throw
+;;        (Exception. (str "Cyclic dependency detected! suspected test cases : ... " ))))
+;;     (if (empty? ts)
+;;       result
+;;       (let [t (first ts)
+;;             t-adjs (adjs (:id t))
+;;             [nodes ts] (reduce
+;;                         (fn [[nodes zero-degs] a]
+;;                           (let [nodes (update nodes a update :in-degree dec)]
+;;                             (if (zero? (:in-degree (nodes a)))
+;;                               [nodes (conj zero-degs (nodes a))]
+;;                               [nodes zero-degs])))
+;;                         [nodes (rest rs)] t-adjs)]
+;;         (recur adjs nodes ts (conj result t))))))
+
+(defn load-tests [file sheet]
   (let [tests (load-tests-from file sheet)
-        valid-tests (map #(assoc :placeholders (placeholders-of %))
+        valid-tests (map #(assoc :vars (vars-in %))
                          (remove :invalid tests))
-        extractors (for [t tests :when (:extractions t)] [(:id t) (map first (:extractions t))])
-        tests (map (fn [{:keys[placeholders options] :as test}]
-                     (assoc test :deps (for [[i extractions] extractors
-                                             :when (some placeholders extractions)] i)
-                            :options (parse-options options))) tests)
-        tests-with-deps (into {} (filter #(if (:deps %) [(:id %) (:deps %)]) tests))]
-    (map #(if (cyclic? tests-with-deps (:id %)) (assoc % :error "circular dependency") %) tests)))
+        extractors (->> (for [{:keys[id options]} valid-tests :when (:extractors options)]
+                          (map #(vector (first %) id) (:extractors options)))
+                        flatten
+                        (into {}))      ;var->id
+        valid-tests (for [t valid-tests]
+                      (assoc t :deps (-> extractors (select-keys (:vars t)) distinct)))
+        tests-with-deps (into {} (filter #(if (:deps %) [(:id %) (:deps %)]) valid-tests))]
+    (->> valid-tests
+         (map #(if (cyclic? tests-with-deps (:id %))
+                 (assoc % :error "circular dependency") %))
+         (merge (filter :invalid tests)))))
