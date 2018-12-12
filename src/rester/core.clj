@@ -5,6 +5,7 @@
             [clj-http.client :as client]
             [clj-http.conn-mgr :refer [make-reusable-conn-manager]]
             [clojure.core :refer [set-agent-send-executor!]]
+            [clojure.core.async :as async :refer [chan >! <!]]
             [clojure.data.xml :refer [emit-str indent parse-str sexp-as-element]]
             [clojure.java.io :as io :refer [make-parents writer]]
             [clojure.set :as set]
@@ -164,6 +165,34 @@
           (catch Exception e
             (log/error e "failed executing test")
             (assoc test :error (str (or (.getMessage e) e))))))))
+
+(defn exec-in-order [tests opts]
+  (let [exec-ch (chan (or (:concurrency opts) 4))]
+    (loop [adjs (->> tests
+                     (mapcat #(for [d (:deps %)] [d (:id %)]))
+                     (reduce #(update %1 (first %2) conj (second %2)) {}))
+           nodes (into {} (for [t tests]
+                            [(:id t) {:test t :in-degree (count (:deps t))}]))
+           ts (filter #(= 0 (:in-degree (second %))) nodes)
+           leftover (count tests)
+           result []]
+      (when (and (empty? ts) (pos? leftover))
+        (throw
+         (Exception. (str "Failed dependencies to execute test cases : ... " ))))
+      (if (empty? ts)
+        result
+        (doseq [t ts]
+          (>! exec-ch t)
+          (let [t (first ts)
+                t-adjs (adjs (:id t))
+                [nodes ts] (reduce
+                            (fn [[nodes zero-degs] a]
+                              (let [nodes (update nodes a update :in-degree dec)]
+                                (if (zero? (:in-degree (nodes a)))
+                                  [nodes (conj zero-degs (nodes a))]
+                                  [nodes zero-degs])))
+                            [nodes (rest ts)] t-adjs)]
+            (recur adjs nodes ts (conj result t))))))))
 
 (defn exec-tests [tests opts]
   (let [skip-tag (opts "skip")

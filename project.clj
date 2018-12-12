@@ -13,6 +13,7 @@
                  [json-path "0.2.0"]
                  [dk.ative/docjure "1.10.0"]
                  [io.forward/yaml "1.0.9"]
+                 [org.clojure/core.async "0.4.490"]
                  ;; [org.clojure/core.specs.alpha "0.2.44"]
                  ]
   :main ^:skip-aot rester.core
