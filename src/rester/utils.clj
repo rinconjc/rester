@@ -189,30 +189,6 @@
    (if (visited x) x
        (some #(cyclic? deps % (conj visited x)) (deps x)))))
 
-;; (defn exec-order [tests]
-;;   (loop [adjs (->> tests
-;;                    (mapcat #(for [d (:deps %)] [d (:id %)]))
-;;                    (reduce #(update %1 (first %2) conj (second %2)) {}))
-;;          nodes (into {} (for [t tests]
-;;                           [(:id t) {:test t :in-degree (count (:deps t))}]))
-;;          ts (filter #(= 0 (:in-degree (second %))) nodes)
-;;          leftover (count tests)
-;;          result []]
-;;     (when (and (empty? ts) (pos? leftover))
-;;       (throw
-;;        (Exception. (str "Cyclic dependency detected! suspected test cases : ... " ))))
-;;     (if (empty? ts)
-;;       result
-;;       (let [t (first ts)
-;;             t-adjs (adjs (:id t))
-;;             [nodes ts] (reduce
-;;                         (fn [[nodes zero-degs] a]
-;;                           (let [nodes (update nodes a update :in-degree dec)]
-;;                             (if (zero? (:in-degree (nodes a)))
-;;                               [nodes (conj zero-degs (nodes a))]
-;;                               [nodes zero-degs])))
-;;                         [nodes (rest rs)] t-adjs)]
-;;         (recur adjs nodes ts (conj result t))))))
 
 (defn load-tests [file sheet]
   (let [tests (load-tests-from file sheet)
