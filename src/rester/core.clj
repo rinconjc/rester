@@ -5,7 +5,7 @@
             [clj-http.client :as client]
             [clj-http.conn-mgr :refer [make-reusable-conn-manager]]
             [clojure.core :refer [set-agent-send-executor!]]
-            [clojure.core.async :as async :refer [chan >! <!]]
+            [clojure.core.async :as async :refer [<! <!! >! chan go go-loop]]
             [clojure.data.xml :refer [emit-str indent parse-str sexp-as-element]]
             [clojure.java.io :as io :refer [make-parents writer]]
             [clojure.set :as set]
@@ -166,33 +166,60 @@
             (log/error e "failed executing test")
             (assoc test :error (str (or (.getMessage e) e))))))))
 
+(defn start-executors
+  "creates n threads that start waiting for tests in the async channel"
+  [result-ch n]
+  (let [test-ch (chan (* n 2))]
+    (dotimes [i n]
+      (-> (fn[]
+            (go-loop [t (<! test-ch)
+                      r (apply exec-test-case t)]
+              (>! result-ch r)) )
+          Thread.
+          .start))
+    result-ch))
+
+(defn topo-iter [tests]
+  (let [adjs (->> tests
+                  (mapcat #(for [d (:deps %)] [d (:id %)]))
+                  (reduce #(update %1 (first %2) conj (second %2)) {}))
+        nodes (atom (into {} (for [t tests]
+                               [(:id t) {:test t :in-degree (count (:deps t))}])))]
+    (fn
+      ([] (filter #(= 0 (:in-degree (second %))) @nodes))
+      ([t]
+       (let [[next-nodes next-ts]
+             (reduce
+              (fn [[nodes zero-degs] a]
+                (let [nodes (update nodes a update :in-degree dec)]
+                  (if (zero? (:in-degree (nodes a)))
+                    [nodes (conj zero-degs (nodes a))]
+                    [nodes zero-degs])))
+              [@nodes []]
+              (adjs (:id t)))]
+         (reset! nodes next-nodes)
+         next-ts)))))
+
 (defn exec-in-order [tests opts]
-  (let [exec-ch (chan (or (:concurrency opts) 4))]
-    (loop [adjs (->> tests
-                     (mapcat #(for [d (:deps %)] [d (:id %)]))
-                     (reduce #(update %1 (first %2) conj (second %2)) {}))
-           nodes (into {} (for [t tests]
-                            [(:id t) {:test t :in-degree (count (:deps t))}]))
-           ts (filter #(= 0 (:in-degree (second %))) nodes)
-           leftover (count tests)
-           result []]
-      (when (and (empty? ts) (pos? leftover))
-        (throw
-         (Exception. (str "Failed dependencies to execute test cases : ... " ))))
-      (if (empty? ts)
-        result
-        (doseq [t ts]
-          (>! exec-ch t)
-          (let [t (first ts)
-                t-adjs (adjs (:id t))
-                [nodes ts] (reduce
-                            (fn [[nodes zero-degs] a]
-                              (let [nodes (update nodes a update :in-degree dec)]
-                                (if (zero? (:in-degree (nodes a)))
-                                  [nodes (conj zero-degs (nodes a))]
-                                  [nodes zero-degs])))
-                            [nodes (rest ts)] t-adjs)]
-            (recur adjs nodes ts (conj result t))))))))
+  (let [concurrency (or (:concurrency opts) 4)
+        exec-ch (chan (* concurrency 2))
+        done-ch (start-executors exec-ch concurrency)
+        topo-iter! (topo-iter tests)
+        runnables (topo-iter!)
+        opts (atom opts)
+        num-tests (count tests)]
+    (when (empty? runnables)
+      (throw (Exception. "No tests ready for execution. Review dependencies")))
+    (go (doseq [t runnables] (>! exec-ch [t opts])))
+    (<!! (go-loop [r (<! done-ch)
+                   num-executed 1
+                   results []]
+           (log/infof "Test %i of %i executed" @num-executed num-tests)
+           (when-let [runnables (not-empty (topo-iter! r))]
+             (go (doseq [t runnables] (>! exec-ch [t opts]))))
+           (if (= num-executed num-tests)
+             results
+             (recur (<! done-ch) (inc num-executed) (conj results r)))))))
 
 (defn exec-tests [tests opts]
   (let [skip-tag (opts "skip")
