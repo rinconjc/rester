@@ -171,32 +171,44 @@
   [result-ch n]
   (let [test-ch (chan (* n 2))]
     (dotimes [i n]
-      (-> (fn[]
-            (go-loop [t (<! test-ch)
-                      r (apply exec-test-case t)]
-              (>! result-ch r)) )
-          Thread.
-          .start))
+      (go-loop [[t opts] (<! test-ch)]
+        (when (:before t)
+          (doseq [bt (:before t)]
+            (try (exec-test-case bt opts)
+                 (catch Exception e (log/errorf e "failed executing before test %s..." (:name bt))))))
+        (let [r (exec-test-case t opts)]
+          (when (:after t)
+            (doseq [at (:after t)]
+              (try (exec-test-case at opts)
+                   (catch Exception e (log/errorf e "failed executing after test %s..." (:name at))))))
+          (>! result-ch r))
+        (recur (<! test-ch))))
     result-ch))
 
 (defn topo-iter [tests]
   (let [adjs (->> tests
                   (mapcat #(for [d (:deps %)] [d (:id %)]))
                   (reduce #(update %1 (first %2) conj (second %2)) {}))
-        nodes (atom (into {} (for [t tests]
-                               [(:id t) {:test t :in-degree (count (:deps t))}])))]
+        nodes (atom
+               (into {} (for [t tests]
+                          [(:id t) {:test t :in-degree (count (:deps t))}])))]
     (fn
       ([] (filter #(= 0 (:in-degree (second %))) @nodes))
       ([t]
-       (let [[next-nodes next-ts]
-             (reduce
-              (fn [[nodes zero-degs] a]
-                (let [nodes (update nodes a update :in-degree dec)]
-                  (if (zero? (:in-degree (nodes a)))
-                    [nodes (conj zero-degs (nodes a))]
-                    [nodes zero-degs])))
-              [@nodes []]
-              (adjs (:id t)))]
+       (let [child-tests (adjs (:id t))
+             [next-nodes next-ts]
+             (if (:success t)
+               (reduce
+                (fn [[nodes zero-degs] a]
+                  (let [nodes (update nodes a update :in-degree dec)]
+                    (if (zero? (:in-degree (nodes a)))
+                      [nodes (conj zero-degs (nodes a))]
+                      [nodes zero-degs])))
+                [@nodes []]
+                child-tests)
+               [(apply dissoc @nodes child-tests)
+                (some->> child-tests (map @nodes)
+                         (map #(assoc % :skipped (format "dependant [%s] failed!" (:name t)))))])]
          (reset! nodes next-nodes)
          next-ts)))))
 
@@ -212,14 +224,18 @@
       (throw (Exception. "No tests ready for execution. Review dependencies")))
     (go (doseq [t runnables] (>! exec-ch [t opts])))
     (<!! (go-loop [r (<! done-ch)
-                   num-executed 1
+                   executed 0
                    results []]
-           (log/infof "Test %i of %i executed" @num-executed num-tests)
-           (when-let [runnables (not-empty (topo-iter! r))]
-             (go (doseq [t runnables] (>! exec-ch [t opts]))))
-           (if (= num-executed num-tests)
-             results
-             (recur (<! done-ch) (inc num-executed) (conj results r)))))))
+           (let [next-tests (not-empty (topo-iter! r))
+                 runnables (when (:success r) next-tests)
+                 done-tests (when-not (:success r) next-tests)
+                 executed (+ executed (count done-tests) 1)]
+             (log/infof "Test %i/%i executed" executed num-tests)
+             (when runnables
+               (go (doseq [t runnables] (>! exec-ch [t opts]))))
+             (if (= executed num-tests)
+               results
+               (recur (<! done-ch) executed (apply conj results r done-tests))))))))
 
 (defn exec-tests [tests opts]
   (let [skip-tag (opts "skip")
