@@ -107,7 +107,7 @@
                                 (vector :headers))]))
       (assoc :options
              (into (or (some-> t :options not-empty parse-options) {})
-                   [[:priority (or (some-> t :priority not-empty to-int) 0)]
+                   [[:priority (some-> t :priority not-empty to-int)]
                     (some->> t :extractors not-empty #(str->map #"\s*=\s*") (vector :extractors))]))))
 
 (defn- rows->test-cases
@@ -189,17 +189,48 @@
    (if (visited x) x
        (some #(cyclic? deps % (conj visited x)) (deps x)))))
 
+(defn priority-dependencies
+  "return map of priority to precedents. e.g. priority 1 depends on tests [3 4 5]"
+  [tests]
+  (loop [groups (->> tests
+                     (group-by (comp :priority :options))
+                     (remove (comp nil? first))
+                     (sort-by first))
+         result {}]
+    (if (<= (count groups) 1)
+      result
+      (let [deps (->> groups first second (map (partial map :id)))
+            priority (->> groups second first)]
+        (recur (rest groups) (assoc result priority deps))))))
+
+(defn get-by-name [tests]
+  (let [tests (group-by :name tests)]
+    (fn [n]
+      (let [t (tests n)]
+        (when (nil? t) (log/warnf "Referenced test with name [%s] is not defined" n))
+        (when (> (count t) 1) (log/warnf "Ambiguous reference to multiple test with name [%s]" n))
+        (first t)))))
 
 (defn load-tests [file sheet]
   (let [tests (load-tests-from file sheet)
+        by-name (get-by-name tests)
         valid-tests (map #(assoc :vars (vars-in %))
-                         (remove :invalid tests))
+                         (remove :invalid tests)
+                         (remove (comp :ignore :options))
+                         ;; (remove (comp :skip :options))
+                         )
         extractors (->> (for [{:keys[id options]} valid-tests :when (:extractors options)]
                           (map #(vector (first %) id) (:extractors options)))
                         flatten
                         (into {}))      ;var->id
+        priority-deps (priority-dependencies valid-tests)
         valid-tests (for [t valid-tests]
-                      (assoc t :deps (-> extractors (select-keys (:vars t)) distinct)))
+                      (-> (assoc :deps (-> extractors
+                                           (select-keys (:vars t))
+                                           (concat (priority-deps (-> t :options :priority)))
+                                           distinct))
+                          (update-in [:options :before] (partial map by-name))
+                          (update-in [:options :after] (partial map by-name))))
         tests-with-deps (into {} (filter #(if (:deps %) [(:id %) (:deps %)]) valid-tests))]
     (->> valid-tests
          (map #(if (cyclic? tests-with-deps (:id %))

@@ -16,9 +16,14 @@
 (s/def ::parse-body boolean?)
 (s/def ::ignore boolean?)
 (s/def ::id int?)
+(s/def ::skip string?)
+(s/def ::names (s/coll-of string?))
+(s/def ::before ::names)
+(s/def ::after ::names)
 (s/def ::body (s/or :raw ::raw-body :json ::json-body :form ::form-body))
 (s/def ::expect (s/keys :req-un [::status] :opt-un [::headers ::body]))
-(s/def ::options (s/keys :opt-un [::priority ::extractors ::parse-body ::ignore]))
+(s/def ::options (s/keys :opt-un [::priority ::extractors ::parse-body ::ignore
+                                  ::skip ::before ::after]))
 
 (s/def ::test-case (s/keys :req-un [::id ::suite ::name ::verb ::url ::expect]
                            :opt-un [::body ::headers ::options]))
