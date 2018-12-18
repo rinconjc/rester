@@ -3,6 +3,7 @@
 
 (def http-verbs #{:GET :POST :PUT :PATCH :OPTIONS} )
 (s/def ::verb http-verbs)
+(s/def ::verb-str (into #{} (map name http-verbs)))
 (s/def ::headers (s/map-of keyword? string?))
 (s/def ::json-body (s/or :array seq? :object map?))
 (s/def ::raw-body string?)
@@ -15,7 +16,6 @@
 (s/def ::suite string?)
 (s/def ::parse-body boolean?)
 (s/def ::ignore boolean?)
-(s/def ::id int?)
 (s/def ::skip string?)
 (s/def ::names (s/coll-of string?))
 (s/def ::before ::names)
@@ -25,5 +25,8 @@
 (s/def ::options (s/keys :opt-un [::priority ::extractors ::parse-body ::ignore
                                   ::skip ::before ::after]))
 
-(s/def ::test-case (s/keys :req-un [::id ::suite ::name ::verb ::url ::expect]
+(s/def ::test-case (s/keys :req-un [::suite ::name ::verb ::url ::expect]
                            :opt-un [::body ::headers ::options]))
+
+;; (s/def ::test-case-row
+;;   (s/cat :suite string? :name string? :url string? :verb ::verb-str :headers ))

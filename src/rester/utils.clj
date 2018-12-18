@@ -79,26 +79,32 @@
             (filter #(or include-empty (not (str/blank? (second %)))))
             (into {}))))))
 
-(defn parse-options [options]
-  (into {} (for [opt (str/split options #"\s*,\s*")
-                 :let[[_ key _ _ value] (re-find #"\s*([^:=\s]+)\s*((:|=)\s*([^\s]+))?\s*" opt) ]
-                 :when key]
-             [(keyword (str/lower-case key)) (or value true)])))
-
-(defn- to-test-case
+(defn to-test-case
   "convert yaml/json to test-case format"
   [params]
   (if-let [[verb url] (some #(some->> (params %) (conj [%])) http-verbs)]
-    (let [data (-> params (assoc :verb verb :url url) (dissoc verb))
+    (let [data (-> params
+                   (assoc :verb verb :url url)
+                   (dissoc verb))
           parsed (s/conform ::rs/test-case data)]
-      (if (= parsed ::s/invalid)
-        {:error (s/explain-str ::rs/test-case data)}
-        data))
-    {:error (str "missing request verb/url:" (:suite params) "/" (:name params))}))
+      (when (= parsed ::s/invalid)
+        (throw (ex-info (format "invalid test case: %s" (:name params))
+                        {:error (s/explain-str ::rs/test-case data)})))
+      data)
+    (throw (ex-info "missing request verb: url" (select-keys params [:suite :name])))))
 
-(defn- parse-test [t]
+(defn from-yaml
+  "Parses tests from a yaml file"
+  [path]
+  (apply concat
+         (for [[suite tests] (yaml/from-file path)]
+           (for [[i [test-name params]] (map-indexed vector tests)
+                 :when (not= test-name :_)]
+             (to-test-case (assoc params :id i :suite (name suite)
+                                  :name (name test-name)))))))
+
+(defn- format-test [t]
   (-> t
-      (update :priority to-int)
       (dissoc :exp-status :exp-body :exp-headers :extractors)
       (assoc :expect
              (into {} [[:status (:exp-status t)]
@@ -121,20 +127,10 @@
       tests
       (let [t (zipmap fields (first rows))
             suite (or (:suite t) suite)
-            t (parse-test (assoc t :suite suite :id id))
+            t (format-test (assoc t :suite suite :id id))
             t (if (s/valid? ::rs/test-case t) t
                   (assoc t :invalid (s/explain-str ::rs/test-case t)))]
         (recur suite (inc id) (rest rows) (conj tests t))))))
-
-(defn from-yaml
-  "Parses tests from a yaml file"
-  [path]
-  (apply concat
-         (for [[suite tests] (yaml/from-file path)]
-           (for [[i [test-name params]] (map-indexed vector tests)
-                 :when (not= test-name :_)]
-             (to-test-case (assoc params :id i :suite (name suite)
-                                  :name (name test-name)))))))
 
 (defmulti load-tests-from
   "Load test cases from the given file"
@@ -152,26 +148,15 @@
     (into [] (->> wk-sheet row-seq
                   (map #(map (fn[i] (if-let [c (.getCell % i)] (str (read-cell c)) ""))
                              (range (count fields))))
-                  rest))))
+                  rest
+                  rows->test-cases))))
 
 (defmethod load-tests-from :csv [file _]
   (with-open [in-file (io/reader file)]
-    (doall (rest (csv/read-csv in-file)))))
+    (doall (rows->test-cases (rest (csv/read-csv in-file))))))
 
 (defmethod load-tests-from :yaml [file _]
   (from-yaml file))
-
-(defn parse-options [options]
-  (into {} (for [opt (str/split options #"\s*,\s*")
-                 :let[[_ key _ _ value] (re-find #"\s*([^:=\s]+)\s*((:|=)\s*([^\s]+))?\s*" opt) ]
-                 :when key]
-             [(keyword (str/lower-case key)) (or value true)])))
-
-(defn- to-int [s]
-  (try
-    (if (empty? s) 0
-        (Integer/parseInt s))
-    (catch Exception e 0)))
 
 (defn parse-vars [s]
   (set (map second (re-seq placeholder-pattern s))))
@@ -211,14 +196,12 @@
         (when (> (count t) 1) (log/warnf "Ambiguous reference to multiple test with name [%s]" n))
         (first t)))))
 
-(defn load-tests [file sheet]
-  (let [tests (load-tests-from file sheet)
-        by-name (get-by-name tests)
-        valid-tests (map #(assoc :vars (vars-in %))
-                         (remove :invalid tests)
-                         (remove (comp :ignore :options))
-                         ;; (remove (comp :skip :options))
-                         )
+(defn process-tests [tests opts]
+  (let [by-name (get-by-name tests)
+        [valid-tests not-runnable]  (map (group-by
+                                          #(not (or (:invalid %) (-> % :options :ignore)))
+                                          tests) [true false])
+        valid-tests (map #(assoc :vars (vars-in %)) valid-tests)
         extractors (->> (for [{:keys[id options]} valid-tests :when (:extractors options)]
                           (map #(vector (first %) id) (:extractors options)))
                         flatten
@@ -232,7 +215,8 @@
                           (update-in [:options :before] (partial map by-name))
                           (update-in [:options :after] (partial map by-name))))
         tests-with-deps (into {} (filter #(if (:deps %) [(:id %) (:deps %)]) valid-tests))]
-    (->> valid-tests
-         (map #(if (cyclic? tests-with-deps (:id %))
-                 (assoc % :error "circular dependency") %))
-         (merge (filter :invalid tests)))))
+
+    (when-let [invalid-test (some #(if (cyclic? tests-with-deps (:id %)) %) valid-tests)]
+      (throw (Exception. (format "cyclic dependency in test %s" (:name invalid-test)))))
+    {:runnable valid-tests
+     :not-runnable not-runnable}))
