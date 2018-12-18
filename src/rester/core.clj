@@ -4,7 +4,7 @@
             [cheshire.factory :as factory]
             [clj-http.client :as client]
             [clj-http.conn-mgr :refer [make-reusable-conn-manager]]
-            [clojure.core :refer [set-agent-send-executor!]]
+            clojure.core
             [clojure.core.async :as async :refer [<! <!! >! chan go go-loop]]
             [clojure.data.xml :refer [emit-str indent parse-str sexp-as-element]]
             [clojure.java.io :as io :refer [make-parents writer]]
@@ -12,11 +12,10 @@
             [clojure.string :as str]
             [clojure.tools.logging :as log]
             [json-path :refer [at-path]]
-            [rester.utils :refer [load-tests replace-opts str->map]])
+            [rester.utils :refer [load-tests-from replace-opts str->map process-tests]])
   (:import [clojure.data.xml CData Element]
            clojure.lang.ExceptionInfo
-           java.lang.Integer
-           java.util.concurrent.Executors))
+           java.lang.Integer))
 
 (defn json->clj [json-str]
   (if-not (str/blank? json-str)
@@ -185,6 +184,9 @@
         (recur (<! test-ch))))
     result-ch))
 
+(defn descendants [adjs x]
+  (concat (adjs x) (distinct (mapcat (partial descendants adjs) (adjs x)))))
+
 (defn topo-iter [tests]
   (let [adjs (->> tests
                   (mapcat #(for [d (:deps %)] [d (:id %)]))
@@ -195,7 +197,7 @@
     (fn
       ([] (filter #(= 0 (:in-degree (second %))) @nodes))
       ([t]
-       (let [child-tests (adjs (:id t))
+       (let [child-tests (if (:success t) (adjs (:id t)) (descendants adjs (:id t)))
              [next-nodes next-ts]
              (if (:success t)
                (reduce
@@ -238,51 +240,56 @@
                (recur (<! done-ch) executed (apply conj results r done-tests))))))))
 
 (defn exec-tests [tests opts]
-  (let [skip-tag (opts "skip")
-        opts (atom opts)
-        name-to-test (into {} (for [t tests] [(:test t) t]))
-        test-agents (vec (map agent tests))
-        exec-test (fn [test]
-                    (if (:done test) test
-                        (let [{:keys [before after skip ignore]} (:options test)
-                              deps (map #(nth test-agents %) (:deps test))
-                              pending (filter (comp not :done deref) deps)]
-                          (if (empty? pending)
-                            (assoc
-                             (cond
-                               (and skip-tag (= skip-tag skip)) (assoc test :ignored "skip requested")
-                               (true? ignore) (assoc test :ignored "ignored")
-                               (every? (comp :success deref) deps)
-                               (try
-                                 (if before (doseq [t (map name-to-test (str/split before #";"))]
-                                              (if t (exec-test-case t opts))))
-                                 (exec-test-case test opts)
-                                 (catch Exception e
-                                   (log/error "before test failed:" e))
-                                 (finally
-                                   (if after (doseq [t (map name-to-test (str/split after #";"))]
-                                               (if t (exec-test-case t opts))))))
-                               :else (assoc test :skipped "dependents failed"))
-                             :done true)
-                            (do
-                              (log/infof "%s blocked by %s" (:id test) (str/join "," (map (comp :id deref) pending)))
-                              test)))))]
+  (let [{:keys [runnable not-runnable]} (process-tests tests opts)
+        executed (when (not-empty runnable) (exec-in-order runnable opts))]
+    (concat executed not-runnable)))
 
-    (doseq [[priority agents] (sort-by first (group-by (comp :priority deref) test-agents))
-            :let [pending (atom (into #{} (map (comp :id deref) agents)))
-                  p (promise)]]
-      (doseq [a agents dep (:deps @a)]
-        (add-watch (nth test-agents dep) [(:id @a) dep]
-                   (fn [k r o n] (send-off a exec-test))))
-      (doseq [a agents]
-        (add-watch a [(:id @a)]
-                   (fn [k r o n] (when (:done n)
-                                   (if (empty? (swap! pending #(remove #{(:id n)} %1)))
-                                     (deliver p :done))
-                                   (log/debug "completed:" (:id n) " pending" @pending))))
-        (send-off a exec-test))
-      @p)
-    (map deref test-agents)))
+;; (defn exec-tests [tests opts]
+;;   (let [skip-tag (opts "skip")
+;;         opts (atom opts)
+;;         name-to-test (into {} (for [t tests] [(:test t) t]))
+;;         test-agents (vec (map agent tests))
+;;         exec-test (fn [test]
+;;                     (if (:done test) test
+;;                         (let [{:keys [before after skip ignore]} (:options test)
+;;                               deps (map #(nth test-agents %) (:deps test))
+;;                               pending (filter (comp not :done deref) deps)]
+;;                           (if (empty? pending)
+;;                             (assoc
+;;                              (cond
+;;                                (and skip-tag (= skip-tag skip)) (assoc test :ignored "skip requested")
+;;                                (true? ignore) (assoc test :ignored "ignored")
+;;                                (every? (comp :success deref) deps)
+;;                                (try
+;;                                  (if before (doseq [t (map name-to-test (str/split before #";"))]
+;;                                               (if t (exec-test-case t opts))))
+;;                                  (exec-test-case test opts)
+;;                                  (catch Exception e
+;;                                    (log/error "before test failed:" e))
+;;                                  (finally
+;;                                    (if after (doseq [t (map name-to-test (str/split after #";"))]
+;;                                                (if t (exec-test-case t opts))))))
+;;                                :else (assoc test :skipped "dependents failed"))
+;;                              :done true)
+;;                             (do
+;;                               (log/infof "%s blocked by %s" (:id test) (str/join "," (map (comp :id deref) pending)))
+;;                               test)))))]
+
+;;     (doseq [[priority agents] (sort-by first (group-by (comp :priority deref) test-agents))
+;;             :let [pending (atom (into #{} (map (comp :id deref) agents)))
+;;                   p (promise)]]
+;;       (doseq [a agents dep (:deps @a)]
+;;         (add-watch (nth test-agents dep) [(:id @a) dep]
+;;                    (fn [k r o n] (send-off a exec-test))))
+;;       (doseq [a agents]
+;;         (add-watch a [(:id @a)]
+;;                    (fn [k r o n] (when (:done n)
+;;                                    (if (empty? (swap! pending #(remove #{(:id n)} %1)))
+;;                                      (deliver p :done))
+;;                                    (log/debug "completed:" (:id n) " pending" @pending))))
+;;         (send-off a exec-test))
+;;       @p)
+;;     (map deref test-agents)))
 
 (defn suites [tests]
   (reduce (fn [suites test]
@@ -291,7 +298,7 @@
               (conj suites {:name (:suite test) :tests [test]})))  [] tests))
 
 (defn summarise-results [tests]
-  (let [result-keys {:error 0 :failure 0 :success 0 :skipped 0 :ignored 0 :total 0}
+  (let [result-keys {:error 0 :failure 0 :success 0 :skipped 0 :ignored 0 :total 0 :invalid 0}
         add-results (fn [r1 r2]
                       (into {} (for [k (keys result-keys)]
                                  [k (+ (r1 k 0) (r2 k 0))])))]
@@ -381,18 +388,16 @@ postman.setEnvironmentVariable(\"%s\", %s);
        ((fn[m] (log/info "common headers:" (m "commonHeaders")) m))))
 
 (defn run-tests [args]
-  (let [pool-size (Integer/parseInt (or (System/getProperty "thread-pool-size") "4"))]
+  (let [pool-size (Integer/parseInt (or (System/getProperty "thread-pool-size") "4"))
+        opts (to-opts (rest args))
+        tests-file (first args)
+        results (-> tests-file
+                    (load-tests-from (opts "sheet"))
+                    (exec-tests opts)
+                    summarise-results)]
     (log/info "thread pool size:" pool-size)
-    (set-agent-send-executor! (Executors/newFixedThreadPool pool-size))
-    (set-agent-send-off-executor! (Executors/newFixedThreadPool pool-size)))
-  (try
-    (let [opts (to-opts (rest args))
-          tests-file (first args)
-          results (-> tests-file (load-tests (opts "sheet")) (exec-tests opts) summarise-results)]
-      ((juxt #(junit-report opts tests-file %) print-test-results) results)
-      (System/exit (+ (get results :error 0) (get results :failure 0))))
-    (finally
-      (shutdown-agents))))
+    ((juxt #(junit-report opts tests-file %) print-test-results) results)
+    (System/exit (+ (get results :error 0) (get results :failure 0)))))
 
 (defn -main
   "Executes HTTP requests specified in the argument provided spreadsheet."
