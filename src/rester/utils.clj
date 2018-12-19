@@ -62,20 +62,21 @@
              [(keyword (str/lower-case key)) (or value true)])))
 
 (defn replace-opts [s opts]
-  (when s
+  (if (string? s)
     (str/replace s placeholder-pattern
                  #(str (or (opts (second %) (parse-date-exp (second %)))
-                           (log/error "missing argument:" (second %)) "")))))
+                           (log/error "missing argument:" (second %)) "")))
+    s))
 
 (defn str->map
-  ([s sep] (str->map s sep {} false))
-  ([s sep opts include-empty]
+  ([s sep] (str->map s sep false))
+  ([s sep include-empty]
    (if-not (str/blank? s)
      (let [[sep1 sep] (if (vector? sep) sep [#"\s*,\s*" sep])]
        (->> (str/split s sep1)
             (map #(let [[k v] (str/split % sep 2)
-                        v (or v (log/warn "missing key or value in " k))]
-                    [k (replace-opts v opts)]))
+                        v (or v (log/warnf "missing key or value in %s" s))]
+                    [k v]))
             (filter #(or include-empty (not (str/blank? (second %)))))
             (into {}))))))
 
@@ -90,7 +91,7 @@
       (when (= parsed ::s/invalid)
         (throw (ex-info (format "invalid test case: %s" (:name params))
                         {:error (s/explain-str ::rs/test-case data)})))
-      data)
+      parsed)
     (throw (ex-info "missing request verb: url" (select-keys params [:suite :name])))))
 
 (defn from-yaml
@@ -106,8 +107,10 @@
 (defn- format-test [t]
   (-> t
       (dissoc :exp-status :exp-body :exp-headers :extractors)
+      (update :headers str->map #":")
+      (update :params str->map [#"&|(\s*,\s*)" #"\s*=\s*"] true)
       (assoc :expect
-             (into {} [[:status (:exp-status t)]
+             (into {} [[:status (some-> (:exp-status t) Double/parseDouble .intValue)]
                        (some->> t :exp-body not-empty (vector :body))
                        (some->> t :exp-headers not-empty #(str->map % #":")
                                 (vector :headers))]))
@@ -128,9 +131,10 @@
       (let [t (zipmap fields (first rows))
             suite (or (:suite t) suite)
             t (format-test (assoc t :suite suite :id id))
-            t (if (s/valid? ::rs/test-case t) t
-                  (assoc t :invalid (s/explain-str ::rs/test-case t)))]
-        (recur suite (inc id) (rest rows) (conj tests t))))))
+            conformed (s/conform ::rs/test-case t)]
+        (when (= conformed ::s/invalid)
+          (throw (ex-info (format "invalid test case: %s" (:name t)) {:error (s/explain-str ::rs/test-case t)})))
+        (recur suite (inc id) (rest rows) (conj tests conformed))))))
 
 (defmulti load-tests-from
   "Load test cases from the given file"
@@ -197,26 +201,30 @@
         (first t)))))
 
 (defn process-tests [tests opts]
-  (let [by-name (get-by-name tests)
-        [valid-tests not-runnable]  (map (group-by
-                                          #(not (or (:invalid %) (-> % :options :ignore)))
-                                          tests) [true false])
-        valid-tests (map #(assoc :vars (vars-in %)) valid-tests)
-        extractors (->> (for [{:keys[id options]} valid-tests :when (:extractors options)]
+  (let [skip-tag (opts "skip")
+        by-name (get-by-name tests)
+        tests (for [t tests :let [ignored (-> t :options :ignore)
+                                  skipped (and skip-tag (= skip-tag (-> t :options :skip)))]]
+                (cond-> t ignored (assoc :ignored true) skipped (assoc :skipped true)))
+        runnables (into [] (comp (remove :ignored)
+                                 (remove :skipped)
+                                 (map #(assoc :vars (vars-in %)))) tests)
+        extractors (->> (for [{:keys[id options]} runnables :when (:extractors options)]
                           (map #(vector (first %) id) (:extractors options)))
                         flatten
                         (into {}))      ;var->id
-        priority-deps (priority-dependencies valid-tests)
-        valid-tests (for [t valid-tests]
-                      (-> (assoc :deps (-> extractors
-                                           (select-keys (:vars t))
-                                           (concat (priority-deps (-> t :options :priority)))
-                                           distinct))
-                          (update-in [:options :before] (partial map by-name))
-                          (update-in [:options :after] (partial map by-name))))
-        tests-with-deps (into {} (filter #(if (:deps %) [(:id %) (:deps %)]) valid-tests))]
+        priority-deps (priority-dependencies runnables)
+        runnables (for [t runnables]
+                    (-> (assoc :deps (-> extractors
+                                         (select-keys (:vars t))
+                                         (concat (priority-deps (-> t :options :priority)))
+                                         distinct))
+                        (update-in [:options :before] (partial map by-name))
+                        (update-in [:options :after] (partial map by-name))))
+        tests-with-deps (into {} (filter #(if (:deps %) [(:id %) (:deps %)]) runnables))]
 
-    (when-let [invalid-test (some #(if (cyclic? tests-with-deps (:id %)) %) valid-tests)]
+    (when-let [invalid-test (some #(if (cyclic? tests-with-deps (:id %)) %) runnables)]
       (throw (Exception. (format "cyclic dependency in test %s" (:name invalid-test)))))
-    {:runnable valid-tests
-     :not-runnable not-runnable}))
+    {:runnable runnables
+     :ignored (filter :ignored tests)
+     :skipped (filter :skipped tests)}))
