@@ -52,10 +52,12 @@
 (defn diff* [a b]
   (let [ldiff (cond
                 (or (and (string? a) (str/blank? a)) (= a b)) nil
-                (and (instance? CData a) (instance? CData b)) (diff* (:content a) (:content b))
-                (and (instance? Element a) (instance? Element b)) (or (if (not= (:tag a) (:tag b)) a)
-                                                                      (diff* (:attrs a) (:attrs b))
-                                                                      (diff* (:content a) (:content b)))
+                (and (instance? CData a)
+                     (instance? CData b)) (diff* (:content a) (:content b))
+                (and (instance? Element a)
+                     (instance? Element b)) (or (if (not= (:tag a) (:tag b)) a)
+                                                (diff* (:attrs a) (:attrs b))
+                                                (diff* (:content a) (:content b)))
                 (map? a) (if (map? b)
                            (let [d (filter #(diff* (second %) (get b (first %))) a)]
                              (if (empty? d) nil (into {} d)))
@@ -65,10 +67,13 @@
                               (if (empty? e) nil (vec e)))
                             a)
                 (string? a) (cond
-                              (or (and (string? b) (= (str/trim a) (str/trim b)))
-                                  (and (= \# (first a)) (re-find (re-pattern (subs a 1)) (str b)))) nil
-                              (re-find #"\s*<[^>]+>" a) (try (diff* (parse-str a) (parse-str b))
-                                                             (catch Exception e a))
+                              (or (and (string? b)
+                                       (= (str/trim a) (str/trim b)))
+                                  (and (= \# (first a))
+                                       (re-find (re-pattern (subs a 1)) (str b)))) nil
+                              (re-find #"\s*<[^>]+>" a) (try
+                                                          (diff* (parse-str a) (parse-str b))
+                                                          (catch Exception e a))
                               :else a)
                 (and (nil? a) (some? b)) (str b " not null")
                 :else a)]
@@ -76,15 +81,18 @@
     ldiff))
 
 (defn coerce-payload [payload content-type]
-  (try (condp re-find (or content-type "json")
-         #"xml" (parse-str payload)
-         #"text" payload
-         #"json" (json->clj payload)
-         nil)
-       (catch Exception e
-         (let [body-str (body-to-string payload)]
-           (log/error e "failed coercing payload" body-str)
-           body-str))))
+  (if (string? payload)
+    (try
+      (condp re-find (or content-type "json")
+        #"xml" (parse-str payload)
+        #"text" payload
+        #"json" (json->clj payload)
+        nil)
+      (catch Exception e
+        (let [body-str (body-to-string payload)]
+          (log/error e "failed coercing payload" body-str)
+          body-str)))
+    payload))
 
 (def conn-mgr (delay (make-reusable-conn-manager {:insecure? true})))
 
@@ -116,7 +124,7 @@
                  (log/error e "failed extracting " path))))))
 
 (defn verify-response [{:keys [status body headers] :as resp}
-                       {:keys [exp-status exp-headers exp-body]}]
+                       {{exp-status :status exp-headers :headers exp-body :body} :expect}]
   (or
    (and (not= status exp-status)
         (format "expected status %d, but received %d" exp-status status))
@@ -130,6 +138,9 @@
                     (json/generate-string %)))
           (str "expected body missing:" )))))
 
+(defn replace-values [m opts]
+  (reduce-kv #(assoc %1 %2 (replace-opts %3 opts)) m m))
+
 (defn prepare-test [{:keys[expect options] :as test} opts]
   (try
     (let [exp-headers (:headers expect)
@@ -138,13 +149,12 @@
                            (replace-opts opts)
                            (coerce-payload (or (get exp-headers "Content-Type") "")))]
       (-> test (update :url replace-opts opts)
-          (update :headers str->map #":" opts false)
+          (update :headers replace-values opts)
           (update :headers merge (opts "commonHeaders"))
-          (update :params str->map  [#"&|(\s*,\s*)" #"\s*=\s*"] opts true)
+          (update :params replace-values opts)
           (update :payload #(-> % (replace-opts opts)
                                 ((if (:dont_parse_payload options) identity json->clj))))
-          (update :exp-status #(.intValue (Double/parseDouble %)))
-          (assoc :exp-body exp-body :exp-headers exp-headers)))
+          (assoc-in [:expect :body] exp-body)))
     (catch Exception e
       (log/error e "error preparing test -> " (:test test))
       (assoc test :error (str "error preparing test due to " e)))))
@@ -174,20 +184,24 @@
         (when (:before t)
           (doseq [bt (:before t)]
             (try (exec-test-case bt opts)
-                 (catch Exception e (log/errorf e "failed executing before test %s..." (:name bt))))))
+                 (catch Exception e
+                   (log/errorf e "failed executing before test %s..." (:name bt))))))
         (let [r (exec-test-case t opts)]
           (when (:after t)
             (doseq [at (:after t)]
               (try (exec-test-case at opts)
-                   (catch Exception e (log/errorf e "failed executing after test %s..." (:name at))))))
+                   (catch Exception e
+                     (log/errorf e "failed executing after test %s..." (:name at))))))
           (>! result-ch r))
         (recur (<! test-ch))))
     result-ch))
 
-(defn descendants [adjs x]
-  (concat (adjs x) (distinct (mapcat (partial descendants adjs) (adjs x)))))
+(defn children-of [adjs x]
+  (concat (adjs x) (distinct (mapcat (partial children-of adjs) (adjs x)))))
 
-(defn topo-iter [tests]
+(defn mk-ordered-iter
+  "creates a dependency aware iterator "
+  [tests]
   (let [adjs (->> tests
                   (mapcat #(for [d (:deps %)] [d (:id %)]))
                   (reduce #(update %1 (first %2) conj (second %2)) {}))
@@ -197,7 +211,7 @@
     (fn
       ([] (filter #(= 0 (:in-degree (second %))) @nodes))
       ([t]
-       (let [child-tests (if (:success t) (adjs (:id t)) (descendants adjs (:id t)))
+       (let [child-tests (if (:success t) (adjs (:id t)) (children-of adjs (:id t)))
              [next-nodes next-ts]
              (if (:success t)
                (reduce
@@ -218,8 +232,8 @@
   (let [concurrency (or (:concurrency opts) 4)
         exec-ch (chan (* concurrency 2))
         done-ch (start-executors exec-ch concurrency)
-        topo-iter! (topo-iter tests)
-        runnables (topo-iter!)
+        next-tests-fn (mk-ordered-iter tests)
+        runnables (next-tests-fn)
         opts (atom opts)
         num-tests (count tests)]
     (when (empty? runnables)
@@ -228,7 +242,7 @@
     (<!! (go-loop [r (<! done-ch)
                    executed 0
                    results []]
-           (let [next-tests (not-empty (topo-iter! r))
+           (let [next-tests (not-empty (next-tests-fn r))
                  runnables (when (:success r) next-tests)
                  done-tests (when-not (:success r) next-tests)
                  executed (+ executed (count done-tests) 1)]
@@ -240,9 +254,9 @@
                (recur (<! done-ch) executed (apply conj results r done-tests))))))))
 
 (defn exec-tests [tests opts]
-  (let [{:keys [runnable not-runnable]} (process-tests tests opts)
-        executed (when (not-empty runnable) (exec-in-order runnable opts))]
-    (concat executed not-runnable)))
+  (let [test-groups (process-tests tests opts)
+        executed (exec-in-order (:runnable test-groups) opts)]
+    (apply concat executed (-> test-groups (dissoc :runnable) vals))))
 
 ;; (defn exec-tests [tests opts]
 ;;   (let [skip-tag (opts "skip")
@@ -365,7 +379,7 @@
                       {:name (:test t)
                        :request {:url (:url t)
                                  :method (:verb t)
-                                 :header (for [[k v] (str->map (:headers t) #":" {} false)]
+                                 :header (for [[k v] (str->map (:headers t) #":" false)]
                                            {:key k :value v})
                                  :body (:payload t)}
                        :event (conj (for [[name path] []] ;; (:extractions t)
@@ -389,7 +403,7 @@ postman.setEnvironmentVariable(\"%s\", %s);
 
 (defn run-tests [args]
   (let [pool-size (Integer/parseInt (or (System/getProperty "thread-pool-size") "4"))
-        opts (to-opts (rest args))
+        opts (-> args rest to-opts (assoc :concurrency pool-size))
         tests-file (first args)
         results (-> tests-file
                     (load-tests-from (opts "sheet"))
