@@ -133,7 +133,8 @@
             t (format-test (assoc t :suite suite :id id))
             conformed (s/conform ::rs/test-case t)]
         (when (= conformed ::s/invalid)
-          (throw (ex-info (format "invalid test case: %s" (:name t)) {:error (s/explain-str ::rs/test-case t)})))
+          (throw (ex-info (format "invalid test case: %s" (:name t))
+                          {:error (s/explain-str ::rs/test-case t)})))
         (recur suite (inc id) (rest rows) (conj tests conformed))))))
 
 (defmulti load-tests-from
