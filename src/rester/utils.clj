@@ -90,7 +90,7 @@
           parsed (s/conform ::rs/test-case data)]
       (when (= parsed ::s/invalid)
         (throw (ex-info (format "invalid test case: %s" (:name params))
-                        {:error (s/explain-str ::rs/test-case data)})))
+                        {:error (s/explain-data ::rs/test-case data)})))
       parsed)
     (throw (ex-info "missing request verb: url" (select-keys params [:suite :name])))))
 
@@ -107,6 +107,7 @@
 (defn- format-test [t]
   (-> t
       (dissoc :exp-status :exp-body :exp-headers :extractors)
+      (update :verb keyword)
       (update :headers str->map #":")
       (update :params str->map [#"&|(\s*,\s*)" #"\s*=\s*"] true)
       (assoc :expect
@@ -116,10 +117,10 @@
                                 (vector :headers))]))
       (assoc :options
              (into (or (some-> t :options not-empty parse-options) {})
-                   [[:priority (some-> t :priority not-empty to-int)]
+                   [(some->> t :priority not-empty to-int (vector :priority))
                     (some->> t :extractors not-empty #(str->map #"\s*=\s*") (vector :extractors))]))))
 
-(defn- rows->test-cases
+(defn rows->test-cases
   "converts rows into test-cases"
   [rows]
   (loop [suite "(Ungrouped Tests)"
@@ -134,7 +135,7 @@
             conformed (s/conform ::rs/test-case t)]
         (when (= conformed ::s/invalid)
           (throw (ex-info (format "invalid test case: %s" (:name t))
-                          {:error (s/explain-str ::rs/test-case t)})))
+                          {:error (s/explain-data ::rs/test-case t)})))
         (recur suite (inc id) (rest rows) (conj tests conformed))))))
 
 (defmulti load-tests-from

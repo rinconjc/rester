@@ -2,7 +2,12 @@
   (:require [clojure.test :refer :all]
             [rester.utils
              :refer
-             [cyclic? parse-date-exp parse-options str->map to-test-case]])
+             [cyclic?
+              parse-date-exp
+              parse-options
+              rows->test-cases
+              str->map
+              to-test-case]])
   (:import clojure.lang.ExceptionInfo
            java.text.SimpleDateFormat
            java.util.Date))
@@ -43,3 +48,8 @@
                                                :options {:before ["other"] :skip "prod"})))))
       (is (thrown? ExceptionInfo (to-test-case (dissoc min-sample :name))))
       (is (thrown? ExceptionInfo (to-test-case (dissoc min-sample :POST)))))))
+
+(deftest test-rows-to-test-case
+  (testing "convert rows to test case"
+    (let [sample-test ["suite1" "test1" "http://api.example.com" "GET" "" "" "" "200" "" "" "" "" ""]]
+      (is (= :GET (:verb (first (rows->test-cases [sample-test]))))))))
