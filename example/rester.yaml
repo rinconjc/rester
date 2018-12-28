@@ -1,0 +1,13 @@
+main: &main
+  bindings: &default-bindings
+    baseUrl: https://api.btcmarkets.net
+    fakeServer: https://jsonplaceholder.typicode.com
+    postId: 10
+  headers:
+    Content-Type: application/json
+  skip: uat
+
+broken:
+  <<: *main
+  bindings:
+    baseUrl: https://broken.example.com

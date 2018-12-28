@@ -3,9 +3,8 @@
             [clojure.test :refer :all]
             [rester.core
              :refer
-             [cyclic? diff* extract-data parse-date-exp parse-options str->map]])
-  (:import java.text.SimpleDateFormat
-           java.util.Date))
+             [diff* exec-tests extract-data mk-ordered-iter prepare-test]]
+            [rester.utils :refer [like]]))
 
 (deftest diff-test
   (testing "diff scalars"
@@ -40,33 +39,48 @@
   (testing "diff with regex"
     (is (nil? (diff* "#\\d+" "0.01")))))
 
-(deftest test-str->map
-  (testing "simple pairs"
-    (is (= {"a" "b" "c" "d"} (str->map "a:b,c : d" #"\s*:\s*"))))
-  (testing "with missing values"
-    (is (= {"a" "b"} (str->map "c,a:b" #"\s*:\s*")))))
 
 (deftest test-extract-data
   (testing "simple json path"
     (is (= {"id" 100} (extract-data {:body {:id 100 "name" "blah"}} {"id" "$.id"})))))
 
-(deftest test-cyclic?
-  (testing "no cycles"
-    (is (nil? (cyclic? {:a [:b :c] :b [:c]} :a)))
-    (is (nil? (cyclic? {:a [:a]} :b))))
-  (testing "cycles"
-    (is (= :a (cyclic? {:a [:a]} :a)))
-    (is (= :b (cyclic? {:a [:b :c] :b [:d] :d [:f] :f [:b]} :a)))))
+(deftest test-ordered-iterator
+  (testing "test ordered iterator"
+    (let [test1 {:id 1 :name "test1" :verb :GET :url "https://api.example.com/"
+                 :headers {"Content-Type" "application/json"} }
+          test2 (assoc test1 :id 2 :name "Test2")
+          test3 (assoc test1 :id 3 :name "test3" :deps #{1})
+          test4 (assoc test1 :id 4 :name "test4" :deps #{3 2})
+          test5 (assoc test1 :id 5 :name "test5" :deps #{4})
+          it-fn (mk-ordered-iter [test1 test2 test3 test4 test5])]
+      (is (= [test1 test2] (it-fn)))
+      (is (empty? (it-fn (assoc test2 :success true))))
+      (is (= [test3] (it-fn (assoc test1 :success true ))))
+      (is (like [{:id 4 :skipped some?} {:id 5 :skipped some?}]
+                (it-fn (assoc test3 :failed true)))))))
 
-(deftest test-date-exps
-  (testing "simple date names"
-    (let [df (SimpleDateFormat. "yyyy-MM-dd")
-          today (.format df (Date.))]
-      (is (= today (parse-date-exp "now")))
-      (is (= today (parse-date-exp "today")))
-      (is (= (parse-date-exp "tomorrow") (parse-date-exp "today+1day")))
-      (is (= (parse-date-exp "today") (parse-date-exp "today +2days -2days"))))))
+(deftest test-prepare-test
+  (testing "prepare test for execution"
+    (let [test1 {:id 1 :name "test1" :verb :POST :url "https://api.example.com/$path$"
+                 :headers {"Content-Type" "application/json" "Authorization" "$accessToken$"}
+                 :params {"search" "$name$"}
+                 :body "{name:\"$name$\"}"
+                 :expect {:status 200 :body "{status:\"OK\",id:\"$id$\"}"}}]
+      (is (like {:body {:name "Pikachu"}
+                 :headers {"Authorization" "1234"}
+                 :url "https://api.example.com/test"
+                 :params {"search" "Pikachu"}
+                 :expect {:body {:status "OK" :id "100"}}}
+                (prepare-test test1 {"name" "Pikachu" "accessToken" "1234" "path" "test" "id" 100}))))))
 
-(deftest test-parse-options
-  (testing "options"
-    (is (= {:before "test1"} (parse-options "before = test1")))))
+(deftest test-test-execution
+  (testing "test suite execution"
+    (let [test1 {:suite "suite1" :id 1 :name "get mock" :verb :get
+                 :url "http://www.mocky.io/v2/5c1d57e03100006c00fdd1c3"
+                 :expect {:status 200 :body "{status:\"OK\"}"}}
+          test2 (-> test1 (assoc :id 2) (assoc-in [:expect :status] 201))]
+      (is (empty? (exec-tests [] {})))
+      (is (like [{:success true}] (exec-tests [test1] {})))
+      (is (like [{:failure some?}] (exec-tests [test2] {})))
+      (is (like [{:id 1 :success true} {:failure some?}]
+                (exec-tests [(dissoc test1 :success) (dissoc test2 :failure)] {:concurrency 1}))))))
