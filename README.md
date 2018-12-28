@@ -9,6 +9,10 @@ The other benefit of defining test cases in spreadsheets is readability. Non dev
 
 ## How?
 
+Test cases can be written in any of these formats: CSV, EXCEL, or YAML
+
+For CSV and EXCEL it should have the following format:
+
 Test cases have to be defined in a Excel spreadsheet or CSV file using the below format.
 
 | Test Suite | Test Case | Target URL | Method | Headers | Payload | Params | Expected Status | Expected Body | Expected Headers | Request Options | Extractions |
@@ -29,14 +33,63 @@ Here's a explanation of the columns:
 * **Expected body**, is part or complete content that the response body is expected to contain. It's optional and only verifies the specified body.
 * **Expected headers**, a comma separated list of header names and values. This is also optional and checks only if the expected headers are present in the response headers.
 * **Request Options**, special options for the request. Only *DONT_PARSE_PAYLOAD* is supported at the moment.
-* **Extractions**, is a comma separated list of variable extractions from the response body. Currently, it supports JSON Path expressions and JSON responses. The extracted variable names can be used as placeholders in other tests cases. 
+* **Extractions**, is a comma separated list of variable extractions from the response body. Currently, it supports JSON Path expressions and JSON responses. The extracted variable names can be used as placeholders in other tests cases.
+
+
+For YAML it should have the following format:
+
+``` yaml
+Auth Tests:
+  Access token request: &auth_request !!ignore
+    POST: https://api.example.com/auth?grant_type=client_credentials
+    headers:
+      Content-Type: application/json
+    expect:
+      Content-Type: application/json
+  Auth request without credentials:
+    <<: *auth_request
+    expect:
+      status: 401
+      headers:
+        Content-Type: application/json
+      body:|
+        {error_code: "401",
+        detail: "Missing credentials"}
+  Auth request with valid credentials:
+    <<: *auth_request
+    headers:
+      Authorization: Basic ${API_UATH}
+    expect:
+      status: 200
+      headers:
+        Content-Type: application/json
+      body:
+        {access_token: "#.+",
+        expires_in: "#\\d+"}
+    options:
+      priority: 1
+      extractors:
+        access_token: $.access_token
+Transactions Tests :
+  Get transactions:
+    GET: https://api.example.com/transactions
+    headers:
+      Authorization: Bearer ${access_token}
+    expect:
+      status: 200
+      headers:
+        Content-Type: application/json
+      body:
+        [{id: "#\\d+", amount: "#\\d+\\.?\\d*"}]
+```
+
 
 ### Features
 * **Placeholders**, variables that are substituted at execution time. They should be surrounded with $ characters. e.g. $apiServer$ above. The values of the placeholders are resolved at run-time from the command line arguments, or the extracted values from dependent requests, or special build-in functions (see *builtin expressions* below).
 * **Variable extraction**. There used to define dependent tests, e.g. one test creates one entry and another gets or updates such entry.
-* **Dependent tests**. The test cases are run in parallel (configurable # of threads, 4 threads by default), and in no specific order, unless for dependent tests. Dependencies are determined implicitly from the *placeholder* sets of every test and the exported *variable extractions* of other tests. E.g In the above example *Update user* depends on *create a user* because the former uses the placeholder *createdUserId*, which is defined as extracted variable in the *create a user* test case.  
-* **Date expressions**. Expressions like $today$ or $today+1year-2weeks$ can be specified as placeholders. Currently, *now*,*today* and *tomorrow* are supported as dynamic dates. The expressions can use any of min, mins, hour, hours, day, days, week, weeks, month, months, year, years.     
-* **Regex support**. The expected headers and expected body, can include regex expressions using a *#* prefix. E.g. {id:"#\\d+"} 
+* **Dependent tests**. The test cases are run in parallel (configurable # of threads, 4 threads by default), and in no specific order, unless for dependent tests. Dependencies are determined implicitly from the *placeholder* sets of every test and the exported *variable extractions* of other tests. E.g In the above example *Update user* depends on *create a user* because the former uses the placeholder *createdUserId*, which is defined as extracted variable in the *create a user* test case.
+* **Date expressions**. Expressions like $today$ or $today+1year-2weeks$ can be specified as placeholders. Currently, *now*,*today* and *tomorrow* are supported as dynamic dates. The expressions can use any of min, mins, hour, hours, day, days, week, weeks, month, months, year, years.
+* **Regex support**. The expected headers and expected body, can include regex expressions using a *#* prefix. E.g. {id:"#\\d+"}
 
 ## Usage
 
