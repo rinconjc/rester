@@ -73,3 +73,10 @@
       (is (like {:id 3 :deps #{2}} (some-like {:id 3} runnable)))
       (is (like {:id 4 :deps #{2 3}} (some-like {:id 4} runnable)))
       (is (like {:id 8 :deps #{7}} (some-like {:id 8} runnable))))))
+
+(deftest tests-in-yaml-format
+  (testing "loading from yaml"
+    (let [ts (load-tests-from "example/sample-tests.yaml" nil)
+          {:keys[runnable ignored skipped]} (process-tests ts {})]
+      (is (= 4 (count ts)))
+      (is (= 4 (count runnable))))))

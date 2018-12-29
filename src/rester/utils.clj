@@ -37,6 +37,15 @@
                                  (and (like (first x) (first y)) (like (rest x) (rest y)))))
     :else (= x y)))
 
+(defn deep-merge [a b]
+  (merge-with #(if (map? %1) (deep-merge %1 %2) %2) a b))
+
+(defn- map-keys [f m]
+  (reduce-kv #(assoc %1 (f %2) %3) {} m))
+
+(defn- map-values [f m]
+  (reduce-kv #(assoc %1 %2 (f %3)) {} m))
+
 (defn- to-int [s]
   (try
     (if (empty? s) 0
@@ -94,10 +103,13 @@
   (if-let [[verb url] (some #(some->> (params %) (conj [%])) http-verbs)]
     (let [data (-> params
                    (assoc :verb verb :url url)
-                   (dissoc verb))
+                   (dissoc verb)
+                   (update :headers (partial map-keys name))
+                   (update-in [:expect :headers] (partial map-keys name))
+                   (update-in [:options :extractors] (partial map-keys name)))
           parsed (s/conform ::rs/test-case data)]
       (when (= parsed ::s/invalid)
-        (throw (ex-info (format "invalid test case: %s" (:name params))
+        (throw (ex-info (format "invalid test case: %s" (:name data))
                         {:error (s/explain-data ::rs/test-case data)})))
       parsed)
     (throw (ex-info "missing request verb: url" (select-keys params [:suite :name])))))
@@ -105,12 +117,13 @@
 (defn from-yaml
   "Parses tests from a yaml file"
   [path]
-  (apply concat
-         (for [[suite tests] (yaml/from-file path)]
-           (for [[i [test-name params]] (map-indexed vector tests)
-                 :when (not= test-name :_)]
-             (to-test-case (assoc params :id i :suite (name suite)
-                                  :name (name test-name)))))))
+  (->> (yaml/from-file path)
+       (map (fn[[suite ts]]
+              (map (fn[[k t]]
+                     (when (not= :_ k) (assoc t :name (name k) :suite (name suite)))) ts)))
+       (apply concat)
+       (filter some?)
+       (map-indexed #(to-test-case (assoc %2 :id %1)))))
 
 (defn- format-test [t]
   (-> t
@@ -243,14 +256,6 @@
      :ignored (filter :ignored tests)
      :skipped (filter :skipped tests)}))
 
-(defn deep-merge [a b]
-  (merge-with #(if (map? %1) (deep-merge %1 %2) %2) a b))
-
-(defn- map-keys [f m]
-  (reduce-kv #(assoc %1 (f %2) %3) {} m))
-
-(defn- map-values [f m]
-  (reduce-kv #(assoc %1 %2 (f %3)) {} m))
 
 (defn load-config [file]
   (let [config (->> file yaml/from-file
