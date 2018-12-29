@@ -1,0 +1,37 @@
+Market data:
+  Invalid path:
+    get: $baseUrl$/marketx/BTC/AUD/tick
+    expect:
+      status: 404
+  Valid path:
+    get: $baseUrl$/market/BTC/AUD/tick
+    expect:
+      status: 200
+      body: |
+        {currency:"AUD", instrument:"BTC"}
+Fake API:
+  Create Post:
+    post: $fakeServer$/posts
+    headers:
+      Content-Type: application/json
+    body: |
+      {userId:10, title:"title1", body:"test post1"}
+    expect:
+      status: 201
+      body: |
+        {id:"#\\d+"}
+      headers:
+        Content-Type: application/json; charset=utf-8
+    options:
+      extractors:
+        postId: $.id
+  Retrieve Post:
+    get: $fakeServer$/posts/$postId$
+    headers:
+      Content-Type: application/json
+    expect:
+      status: 200
+      body: |
+        {title:"title1"}
+      headers:
+        Content-Type: application/json; charset=utf-8
