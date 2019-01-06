@@ -3,14 +3,20 @@
             [rester.utils
              :refer
              [cyclic?
+              like
+              load-tests-from
               parse-date-exp
               parse-options
+              process-tests
               rows->test-cases
               str->map
               to-test-case]])
   (:import clojure.lang.ExceptionInfo
            java.text.SimpleDateFormat
            java.util.Date))
+
+(defn some-like [x xs]
+  (some #(when (like x %) %) xs))
 
 (deftest test-str->map
   (testing "simple pairs"
@@ -42,14 +48,35 @@
 (deftest test-to-test-case
   (testing "convert to test case"
     (let [min-sample {:suite "suit1" :name "test1"
-                      :POST "https://api.example.com/" :expect {:status 200}}]
-      (is (= :POST (:verb (to-test-case min-sample))))
-      (is (= :POST (:verb (to-test-case (assoc min-sample
+                      :post "https://api.example.com/" :expect {:status 200}}]
+      (is (= :post (:verb (to-test-case min-sample))))
+      (is (= :post (:verb (to-test-case (assoc min-sample
                                                :options {:before ["other"] :skip "prod"})))))
       (is (thrown? ExceptionInfo (to-test-case (dissoc min-sample :name))))
-      (is (thrown? ExceptionInfo (to-test-case (dissoc min-sample :POST)))))))
+      (is (thrown? ExceptionInfo (to-test-case (dissoc min-sample :post)))))))
 
 (deftest test-rows-to-test-case
   (testing "convert rows to test case"
-    (let [sample-test ["suite1" "test1" "http://api.example.com" "GET" "" "" "" "200" "" "" "" "" ""]]
-      (is (= :GET (:verb (first (rows->test-cases [sample-test]))))))))
+    (let [sample-test ["suite1" "test1" "http://api.example.com"
+                       "GET" "Content-Type:application/json" "" "" "200" ""
+                       "Content-Type:application/json" "" "id=$.id" ""]]
+      (is (like [{:verb :get :expect {:status 200}
+                  :options {:extractors {"id" "$.id"}}}]
+                (rows->test-cases [sample-test]))))))
+
+(deftest test-process-tests
+  (testing "loading from csv"
+    (let [ts (load-tests-from "example/sample-tests.csv" nil)
+          {:keys[runnable ignored skipped]} (process-tests ts {})]
+      (is (= 9 (count ts)))
+      (is (= 9 (count runnable)))
+      (is (like {:id 3 :deps #{2}} (some-like {:id 3} runnable)))
+      (is (like {:id 4 :deps #{2 3}} (some-like {:id 4} runnable)))
+      (is (like {:id 8 :deps #{7}} (some-like {:id 8} runnable))))))
+
+(deftest tests-in-yaml-format
+  (testing "loading from yaml"
+    (let [ts (load-tests-from "example/sample-tests.yaml" nil)
+          {:keys[runnable ignored skipped]} (process-tests ts {})]
+      (is (= 4 (count ts)))
+      (is (= 4 (count runnable))))))
