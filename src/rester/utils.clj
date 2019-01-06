@@ -17,7 +17,7 @@
            java.util.Calendar))
 
 (def ^:const fields [:suite :name :url :verb :headers :payload :params :exp-status :exp-body
-                     :exp-headers :options :extractions :priority])
+                     :exp-headers :options :extractors :priority])
 
 (def ^:const placeholder-pattern #"\$(\p{Alpha}[^\$]*)\$")
 (def ^:const date-operand-pattern #"\s*(\+|-)\s*(\d+)\s*(\p{Alpha}+)")
@@ -28,6 +28,23 @@
                           "hour" Calendar/HOUR "hours" Calendar/HOUR
                           "min" Calendar/MINUTE "mins" Calendar/MINUTE
                           "sec" Calendar/SECOND "secs" Calendar/SECOND})
+
+(defn like [x y]
+  (cond
+    (map? x) (and (map? y)
+                  (every? (fn[[k v]] (if (fn? v) (v (get y k)) (like v (get y k)))) x))
+    (coll? x) (and (coll? y) (or (and (empty? x) (empty? y))
+                                 (and (like (first x) (first y)) (like (rest x) (rest y)))))
+    :else (= x y)))
+
+(defn deep-merge [a b]
+  (merge-with #(if (map? %1) (deep-merge %1 %2) %2) a b))
+
+(defn- map-keys [f m]
+  (reduce-kv #(assoc %1 (f %2) %3) {} m))
+
+(defn- map-values [f m]
+  (reduce-kv #(assoc %1 %2 (f %3)) {} m))
 
 (defn- to-int [s]
   (try
@@ -86,10 +103,13 @@
   (if-let [[verb url] (some #(some->> (params %) (conj [%])) http-verbs)]
     (let [data (-> params
                    (assoc :verb verb :url url)
-                   (dissoc verb))
+                   (dissoc verb)
+                   (update :headers (partial map-keys name))
+                   (update-in [:expect :headers] (partial map-keys name))
+                   (update-in [:options :extractors] (partial map-keys name)))
           parsed (s/conform ::rs/test-case data)]
       (when (= parsed ::s/invalid)
-        (throw (ex-info (format "invalid test case: %s" (:name params))
+        (throw (ex-info (format "invalid test case: %s" (:name data))
                         {:error (s/explain-data ::rs/test-case data)})))
       parsed)
     (throw (ex-info "missing request verb: url" (select-keys params [:suite :name])))))
@@ -97,28 +117,30 @@
 (defn from-yaml
   "Parses tests from a yaml file"
   [path]
-  (apply concat
-         (for [[suite tests] (yaml/from-file path)]
-           (for [[i [test-name params]] (map-indexed vector tests)
-                 :when (not= test-name :_)]
-             (to-test-case (assoc params :id i :suite (name suite)
-                                  :name (name test-name)))))))
+  (->> (yaml/from-file path)
+       (map (fn[[suite ts]]
+              (map (fn[[k t]]
+                     (when (not= :_ k) (assoc t :name (name k) :suite (name suite)))) ts)))
+       (apply concat)
+       (filter some?)
+       (map-indexed #(to-test-case (assoc %2 :id %1)))))
 
 (defn- format-test [t]
   (-> t
       (dissoc :exp-status :exp-body :exp-headers :extractors)
-      (update :verb keyword)
+      (update :verb (comp keyword str/lower-case))
       (update :headers str->map #":")
       (update :params str->map [#"&|(\s*,\s*)" #"\s*=\s*"] true)
       (assoc :expect
              (into {} [[:status (some-> (:exp-status t) Double/parseDouble .intValue)]
                        (some->> t :exp-body not-empty (vector :body))
-                       (some->> t :exp-headers not-empty #(str->map % #":")
+                       (some->> t :exp-headers (#(str->map % #":"))
                                 (vector :headers))]))
       (assoc :options
              (into (or (some-> t :options not-empty parse-options) {})
                    [(some->> t :priority not-empty to-int (vector :priority))
-                    (some->> t :extractors not-empty #(str->map #"\s*=\s*") (vector :extractors))]))))
+                    (some->> t :extractors not-empty (#(str->map % #"\s*=\s*"))
+                             (vector :extractors))]))))
 
 (defn rows->test-cases
   "converts rows into test-cases"
@@ -130,7 +152,7 @@
     (if (empty? rows)
       tests
       (let [t (zipmap fields (first rows))
-            suite (or (:suite t) suite)
+            suite (or (not-empty (:suite t)) suite)
             t (format-test (assoc t :suite suite :id id))
             conformed (s/conform ::rs/test-case t)]
         (when (= conformed ::s/invalid)
@@ -165,7 +187,7 @@
   (from-yaml file))
 
 (defn parse-vars [s]
-  (set (map second (re-seq placeholder-pattern s))))
+  (when s (set (map second (re-seq placeholder-pattern s)))))
 
 (defn vars-in [{:keys[url headers params body expect]}]
   (->> [url (vals headers) (vals params)
@@ -184,13 +206,13 @@
   "return map of priority to precedents. e.g. priority 1 depends on tests [3 4 5]"
   [tests]
   (loop [groups (->> tests
+                     (filter (comp :priority :options))
                      (group-by (comp :priority :options))
-                     (remove (comp nil? first))
                      (sort-by first))
          result {}]
     (if (<= (count groups) 1)
       result
-      (let [deps (->> groups first second (map (partial map :id)))
+      (let [deps (->> groups first second (map :id))
             priority (->> groups second first)]
         (recur (rest groups) (assoc result priority deps))))))
 
@@ -203,30 +225,42 @@
         (first t)))))
 
 (defn process-tests [tests opts]
-  (let [skip-tag (opts "skip")
+  (let [skip-tag (opts :skip)
+        common-headers (:headers opts)
         by-name (get-by-name tests)
         tests (for [t tests :let [ignored (-> t :options :ignore)
                                   skipped (and skip-tag (= skip-tag (-> t :options :skip)))]]
                 (cond-> t ignored (assoc :ignored true) skipped (assoc :skipped true)))
         runnables (into [] (comp (remove :ignored)
                                  (remove :skipped)
-                                 (map #(assoc :vars (vars-in %)))) tests)
-        extractors (->> (for [{:keys[id options]} runnables :when (:extractors options)]
+                                 (map #(assoc % :vars (vars-in %)
+                                              :headers (merge common-headers (:headers %))))) tests)
+        extractors (->> (for [{:keys[id options]} runnables
+                              :when (:extractors options)]
                           (map #(vector (first %) id) (:extractors options)))
-                        flatten
-                        (into {}))      ;var->id
+                        (apply concat) (into {}))      ;var->id
         priority-deps (priority-dependencies runnables)
         runnables (for [t runnables]
-                    (-> (assoc :deps (-> extractors
-                                         (select-keys (:vars t))
-                                         (concat (priority-deps (-> t :options :priority)))
-                                         distinct))
+                    (-> t (assoc :deps (-> extractors
+                                           (select-keys (:vars t))
+                                           vals
+                                           (concat (priority-deps (-> t :options :priority)))
+                                           set))
                         (update-in [:options :before] (partial map by-name))
                         (update-in [:options :after] (partial map by-name))))
-        tests-with-deps (into {} (filter #(if (:deps %) [(:id %) (:deps %)]) runnables))]
+        tests-with-deps (into {} (filter #(when (:deps %) [(:id %) (:deps %)]) runnables))]
 
     (when-let [invalid-test (some #(if (cyclic? tests-with-deps (:id %)) %) runnables)]
       (throw (Exception. (format "cyclic dependency in test %s" (:name invalid-test)))))
     {:runnable runnables
      :ignored (filter :ignored tests)
      :skipped (filter :skipped tests)}))
+
+
+(defn load-config [file]
+  (let [config (->> file yaml/from-file
+                    (map-values #(-> % (update :bindings (partial map-keys name))
+                                     (update :headers (partial map-keys name)))))]
+    (if (s/valid? ::rs/config config)
+      config
+      (throw (ex-info "Invalid configuration format" :error (s/explain ::rs/config config))))))

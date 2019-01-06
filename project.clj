@@ -14,7 +14,8 @@
                  [dk.ative/docjure "1.10.0"]
                  [io.forward/yaml "1.0.9"]
                  [org.clojure/core.async "0.4.490"]
-                 [org.apache.logging.log4j/log4j-slf4j18-impl "2.11.1"]
+                 [ch.qos.logback/logback-classic "1.2.3"]
+                 [org.clojure/tools.cli "0.4.1"]
                  ;; [org.clojure/core.specs.alpha "0.2.44"]
                  ]
   :main ^:skip-aot rester.core

@@ -10,12 +10,22 @@
             [clojure.java.io :as io :refer [make-parents writer]]
             [clojure.set :as set]
             [clojure.string :as str]
+            [clojure.tools.cli :as cli]
             [clojure.tools.logging :as log]
             [json-path :refer [at-path]]
-            [rester.utils :refer [load-tests-from replace-opts str->map process-tests]])
+            [rester.utils
+             :refer
+             [deep-merge
+              load-config
+              load-tests-from
+              process-tests
+              replace-opts
+              str->map]])
   (:import [clojure.data.xml CData Element]
            clojure.lang.ExceptionInfo
-           java.lang.Integer))
+           java.io.File
+           java.lang.Integer
+           java.util.Date))
 
 (defn json->clj [json-str]
   (if-not (str/blank? json-str)
@@ -31,7 +41,7 @@
         :else "(binary)"))
 
 (defn print-curl-request [req]
-  (str "curl -v -X" (:verb req) " " (:url req)
+  (str "curl -v -X" (-> req :verb name str/upper-case) " " (:url req)
        (if-not (empty? (:params req))
          (str (if-not (.contains (:url req) "?") "?") (->> req :params (map #(str/join "=" %)) (#(str/join "&" %))))) " "
        (->> req :headers (map #(str "-H'" (first %) ":" (second %) "' ")) str/join)
@@ -46,7 +56,7 @@
                           (format-headers (:params req)) (body-to-string (:payload req)))
                   (print-curl-request req))]
 
-    (format "\n%s\n--------------\nresponse status:%d\n%s\nbody:\n%s"
+    (format "\n%s\n--------------\nResponse:\nstatus:%d\n%s\nbody:\n%s"
             req-str (:status res) (format-headers (:headers res)) (body-to-string (:body res)))))
 
 (defn diff* [a b]
@@ -87,7 +97,7 @@
         #"xml" (parse-str payload)
         #"text" payload
         #"json" (json->clj payload)
-        nil)
+        payload)
       (catch Exception e
         (let [body-str (body-to-string payload)]
           (log/error e "failed coercing payload" body-str)
@@ -96,16 +106,16 @@
 
 (def conn-mgr (delay (make-reusable-conn-manager {:insecure? true})))
 
-(defn mk-request [{:keys[test url verb headers params payload] :as  req}]
-  (log/info "executing" test ": " verb " " url)
+(defn mk-request [{:keys[name url verb headers params body] :as  req}]
+  (log/info "executing:" name ":" verb url)
   (-> (try
         (client/request {:url url
-                         :method (keyword (str/lower-case verb))
+                         :method verb
                          ;; :content-type :json
                          :headers headers
                          :query-params params
-                         :body (if (string? payload) payload
-                                   (and (seq payload) (json/generate-string payload)))
+                         :body (if (string? body) body
+                                   (and (seq body) (json/generate-string body)))
                          :insecure? true
                          :connection-manager @conn-mgr})
         (catch ExceptionInfo e
@@ -143,20 +153,19 @@
 
 (defn prepare-test [{:keys[expect options] :as test} opts]
   (try
-    (let [exp-headers (:headers expect)
-          exp-body (some-> (:body expect)
-                           not-empty
-                           (replace-opts opts)
-                           (coerce-payload (or (get exp-headers "Content-Type") "")))]
+    (let [exp-headers (:headers expect) ]
       (-> test (update :url replace-opts opts)
           (update :headers replace-values opts)
-          (update :headers merge (opts "commonHeaders"))
           (update :params replace-values opts)
-          (update :payload #(-> % (replace-opts opts)
-                                ((if (:dont_parse_payload options) identity json->clj))))
-          (assoc-in [:expect :body] exp-body)))
+          (update :body
+                  #(-> % (replace-opts opts)
+                       ((if (:dont_parse_payload options) identity json->clj))))
+          (update-in [:expect :body]
+                     #(some-> % not-empty
+                              (replace-opts opts)
+                              (coerce-payload (get exp-headers "Content-Type"))))))
     (catch Exception e
-      (log/error e "error preparing test -> " (:test test))
+      (log/error e "error preparing test -> " (:name test))
       (assoc test :error (str "error preparing test due to " e)))))
 
 (defn exec-test-case [test opts]
@@ -169,16 +178,16 @@
             (if delta
               (assoc test :failure delta)
               (do
-                (swap! opts merge (extract-data resp (:extractions test)))
+                (swap! opts merge (extract-data resp (-> test :options :extractors)))
                 (assoc test :success true))))
           (catch Exception e
-            (log/error e "failed executing test")
+            (log/errorf e "failed executing test: %s" (:name test))
             (assoc test :error (str (or (.getMessage e) e))))))))
 
 (defn start-executors
   "creates n threads that start waiting for tests in the async channel"
-  [result-ch n]
-  (let [test-ch (chan (* n 2))]
+  [test-ch n]
+  (let [result-ch (chan (* n 2))]
     (dotimes [i n]
       (go-loop [[t opts] (<! test-ch)]
         (when (:before t)
@@ -209,7 +218,8 @@
                (into {} (for [t tests]
                           [(:id t) {:test t :in-degree (count (:deps t))}])))]
     (fn
-      ([] (filter #(= 0 (:in-degree (second %))) @nodes))
+      ([]
+       (->> @nodes (filter #(= 0 (:in-degree (second %)))) (map (comp :test second))))
       ([t]
        (let [child-tests (if (:success t) (adjs (:id t)) (children-of adjs (:id t)))
              [next-nodes next-ts]
@@ -218,92 +228,51 @@
                 (fn [[nodes zero-degs] a]
                   (let [nodes (update nodes a update :in-degree dec)]
                     (if (zero? (:in-degree (nodes a)))
-                      [nodes (conj zero-degs (nodes a))]
+                      [nodes (conj zero-degs (:test (nodes a)))]
                       [nodes zero-degs])))
                 [@nodes []]
                 child-tests)
                [(apply dissoc @nodes child-tests)
-                (some->> child-tests (map @nodes)
-                         (map #(assoc % :skipped (format "dependant [%s] failed!" (:name t)))))])]
+                (some->> child-tests (map (comp :test @nodes))
+                         (map #(assoc % :skipped (format "dependant [%s] failed!" (:name t))))
+                         (into []))])]
          (reset! nodes next-nodes)
          next-ts)))))
 
 (defn exec-in-order [tests opts]
-  (let [concurrency (or (:concurrency opts) 4)
-        exec-ch (chan (* concurrency 2))
-        done-ch (start-executors exec-ch concurrency)
-        next-tests-fn (mk-ordered-iter tests)
-        runnables (next-tests-fn)
-        opts (atom opts)
-        num-tests (count tests)]
-    (when (empty? runnables)
-      (throw (Exception. "No tests ready for execution. Review dependencies")))
-    (go (doseq [t runnables] (>! exec-ch [t opts])))
-    (<!! (go-loop [r (<! done-ch)
-                   executed 0
-                   results []]
-           (let [next-tests (not-empty (next-tests-fn r))
-                 runnables (when (:success r) next-tests)
-                 done-tests (when-not (:success r) next-tests)
-                 executed (+ executed (count done-tests) 1)]
-             (log/infof "Test %i/%i executed" executed num-tests)
-             (when runnables
-               (go (doseq [t runnables] (>! exec-ch [t opts]))))
-             (if (= executed num-tests)
-               results
-               (recur (<! done-ch) executed (apply conj results r done-tests))))))))
+  (when-not (empty? tests)
+    (let [concurrency (or (:concurrency opts) 4)
+          exec-ch (chan (* concurrency 2))
+          done-ch (start-executors exec-ch concurrency)
+          next-tests-fn (mk-ordered-iter tests)
+          runnables (next-tests-fn)
+          bindings (atom (:bindings opts))
+          num-tests (count tests)]
+      (when (empty? runnables)
+        (throw (ex-info "No tests ready for execution. Review dependencies" {})))
+      (go (doseq [t runnables] (>! exec-ch [t bindings])))
+      (<!! (go-loop [r (<! done-ch)
+                     pending (dec (count runnables))
+                     executed 0
+                     results []]
+             (let [next-tests (not-empty (next-tests-fn r))
+                   runnables (when (:success r) next-tests)
+                   skipped (when-not (:success r) next-tests)
+                   executed (+ executed (count skipped) 1)
+                   results (apply conj results r skipped)]
+               (log/infof "Test %d/%d executed" executed num-tests)
+               (if runnables
+                 (go (doseq [t runnables] (>! exec-ch [t bindings])))
+                 (when (and (zero? pending) (< executed num-tests ))
+                   (throw (ex-info "failed to complete execution!" {:state tests}))))
+               (if (= executed num-tests)
+                 results
+                 (recur (<! done-ch) (dec (+ pending (count runnables))) executed results))))))))
 
 (defn exec-tests [tests opts]
   (let [test-groups (process-tests tests opts)
         executed (exec-in-order (:runnable test-groups) opts)]
     (apply concat executed (-> test-groups (dissoc :runnable) vals))))
-
-;; (defn exec-tests [tests opts]
-;;   (let [skip-tag (opts "skip")
-;;         opts (atom opts)
-;;         name-to-test (into {} (for [t tests] [(:test t) t]))
-;;         test-agents (vec (map agent tests))
-;;         exec-test (fn [test]
-;;                     (if (:done test) test
-;;                         (let [{:keys [before after skip ignore]} (:options test)
-;;                               deps (map #(nth test-agents %) (:deps test))
-;;                               pending (filter (comp not :done deref) deps)]
-;;                           (if (empty? pending)
-;;                             (assoc
-;;                              (cond
-;;                                (and skip-tag (= skip-tag skip)) (assoc test :ignored "skip requested")
-;;                                (true? ignore) (assoc test :ignored "ignored")
-;;                                (every? (comp :success deref) deps)
-;;                                (try
-;;                                  (if before (doseq [t (map name-to-test (str/split before #";"))]
-;;                                               (if t (exec-test-case t opts))))
-;;                                  (exec-test-case test opts)
-;;                                  (catch Exception e
-;;                                    (log/error "before test failed:" e))
-;;                                  (finally
-;;                                    (if after (doseq [t (map name-to-test (str/split after #";"))]
-;;                                                (if t (exec-test-case t opts))))))
-;;                                :else (assoc test :skipped "dependents failed"))
-;;                              :done true)
-;;                             (do
-;;                               (log/infof "%s blocked by %s" (:id test) (str/join "," (map (comp :id deref) pending)))
-;;                               test)))))]
-
-;;     (doseq [[priority agents] (sort-by first (group-by (comp :priority deref) test-agents))
-;;             :let [pending (atom (into #{} (map (comp :id deref) agents)))
-;;                   p (promise)]]
-;;       (doseq [a agents dep (:deps @a)]
-;;         (add-watch (nth test-agents dep) [(:id @a) dep]
-;;                    (fn [k r o n] (send-off a exec-test))))
-;;       (doseq [a agents]
-;;         (add-watch a [(:id @a)]
-;;                    (fn [k r o n] (when (:done n)
-;;                                    (if (empty? (swap! pending #(remove #{(:id n)} %1)))
-;;                                      (deliver p :done))
-;;                                    (log/debug "completed:" (:id n) " pending" @pending))))
-;;         (send-off a exec-test))
-;;       @p)
-;;     (map deref test-agents)))
 
 (defn suites [tests]
   (reduce (fn [suites test]
@@ -312,56 +281,54 @@
               (conj suites {:name (:suite test) :tests [test]})))  [] tests))
 
 (defn summarise-results [tests]
-  (let [result-keys {:error 0 :failure 0 :success 0 :skipped 0 :ignored 0 :total 0 :invalid 0}
-        add-results (fn [r1 r2]
-                      (into {} (for [k (keys result-keys)]
-                                 [k (+ (r1 k 0) (r2 k 0))])))]
-    (->> tests
-         (reduce
-          (fn [suites test]
-            (if (str/blank? (:suite test))
-              (update suites (dec (count suites)) update :tests conj test)
-              (conj suites {:name (:suite test) :tests [test]}))) [])
-         (map (fn [suite]
-                (merge suite
-                       (reduce (fn[s t]
-                                 (-> s (update (or (some #(if (t %) %) (keys s))
-                                                   (log/warn "unexpected:" t) :error) inc)
-                                     (update :total inc)))
-                               result-keys (:tests suite)))))
-         (#(assoc (reduce add-results %) :suites %)))))
+  (let [groups #{:error :failure :success :skipped :ignored :total}
+        totals (zipmap groups (repeat 0))
+        summarizer-fn (fn [totals t]
+                        (let [k (some #(when (t %) %) groups)]
+                          (-> totals
+                              (update k inc)
+                              (update :total inc))))
+        suites (->> tests
+                    (group-by :suite)
+                    (sort-by (comp :id first second))
+                    (map #(update % 1 (fn[ts] {:tests (sort-by :id ts)
+                                               :summary (reduce summarizer-fn totals ts)}))))]
+    {:suites suites
+     :summary (->> suites (map (comp :summary second)) (apply merge-with +))}))
 
-(defn print-test-results [{:keys[suites total failure error skipped ignored]}]
+(defn print-test-results [{:keys[suites summary]}]
   (flush)
   (println "=============================================================")
-  (println "Test cases:" total ", failed:" failure ", skipped:" skipped ", ignored:" ignored)
-  (doseq [suite suites]
-    (println (:name suite))
-    (doseq [test (:tests suite)
+  (println (apply format "Test cases: %d, failures:%d, errors:%d, skipped:%d, ignored:%d"
+                  (map summary [:total :failure :error :skipped :ignored])))
+  (doseq [[suite {tests :tests}] suites]
+    (println suite)
+    (doseq [test tests
             :let [result (some #(if-let [v (% test)] (str % " " v)) [:error :failure :skipped])]]
       (print (cond
                (:success test) "\u001B[32m [v] "
                (:ignored test) "\u001B[32m [_] "
                :true "\u001B[31m [x] "))
-      (println (:test test) "\t" (or result :success) "\u001B[0m"))))
+      (println (:name test) "\t" (or result :success) "\u001B[0m"))))
 
-(defn junit-report [opts src-file {:keys [suites]}]
-  (let [dest-file (opts "report.file"
+(defn junit-report [opts src-file {suites :suites}]
+  (let [dest-file (opts :report
                         (str "target/" (str/replace src-file #"\.[^.]+" "-results.xml")))]
     (make-parents dest-file)
     (with-open [out (writer dest-file)]
       (indent (sexp-as-element
                [:testsuites
-                (for [{:keys [name tests total failure error skipped]} suites]
+                (for [[name {tests :tests {:keys[ignored total failure error skipped]} :summary}] suites]
                   [:testsuite {:name name :errors error :tests total :failures failure}
-                   (for [test tests :let [req-log (delay [:-cdata (print-http-message test (:resp test))])]]
-                     [:testcase {:name (:test test) :classname src-file :time (:time test)}
+                   (for [test tests
+                         :let [req-log (delay [:-cdata (print-http-message test (:resp test))])]]
+                     [:testcase {:name (:name test) :classname src-file :time (:time test)}
                       (condp test nil
                         :error :>> #(vector :error {:message %} @req-log)
                         :failure :>> #(vector :failure {:message %} @req-log)
                         :skipped [:skipped]
                         :ignored [:skipped]
-                        :success (if (opts "report.http-log") @req-log)
+                        :success (when (:verbose opts) @req-log)
                         nil)])])])
               out))))
 
@@ -369,7 +336,7 @@
 
 (defn tests->postman [name tests opts]
   (let [all-placeholders (into #{} (reduce #(concat %1 (:placeholders %2)) [] tests))
-        all-extractions (into #{} (reduce #(concat %1 (:extractions %2)) [] tests))
+        all-extractions (into #{} (reduce #(concat %1 (:extractors %2)) [] tests))
         all-suites (suites tests)]
     {:info {:name name :schema "https://schema.getpostman.com/json/collection/v2.0.0/collection.json"}
      :variables (for [v (set/difference all-placeholders all-extractions)] {:id v :name v})
@@ -401,24 +368,60 @@ postman.setEnvironmentVariable(\"%s\", %s);
        ((fn[m] (update m "commonHeaders" str->map #"=")))
        ((fn[m] (log/info "common headers:" (m "commonHeaders")) m))))
 
-(defn run-tests [args]
-  (let [pool-size (Integer/parseInt (or (System/getProperty "thread-pool-size") "4"))
-        opts (-> args rest to-opts (assoc :concurrency pool-size))
-        tests-file (first args)
-        results (-> tests-file
-                    (load-tests-from (opts "sheet"))
-                    (exec-tests opts)
-                    summarise-results)]
-    (log/info "thread pool size:" pool-size)
-    ((juxt #(junit-report opts tests-file %) print-test-results) results)
-    (System/exit (+ (get results :error 0) (get results :failure 0)))))
+(defn run-tests [file opts]
+  (let [[tests-file work-sheet] (str/split file #":" 2)]
+    (-> tests-file
+        (load-tests-from work-sheet)
+        (exec-tests opts)
+        (summarise-results))))
+
+(def cli-options
+  [["-c" "--config CONFIG" "configuration file"
+    :validate [#(.exists (File. %)) "config file not found"]
+    :assoc-fn #(assoc %1 %2 (load-config %3))]
+   ["-p" "--profiles PROFILES" "comma separated list of profiles"
+    :default ["main"]
+    :parse-fn #(some-> % not-empty (str/split #","))]
+   ["-t" "--concurrency CONCURRENCY" "concurrency level (max number of concurrent test execution)"
+    :parse-fn #(Integer/parseInt %)
+    :validate [#(< 0 % 1000) "Must be a number between 1 and 1000"] ]
+   ["-b" "--binding BINDING" "variable binding" :id :bindings :default {}
+    :assoc-fn #(update %1 %2 conj (str/split %3 #"=" 2))]
+   ["-H" "--header HEADER" "common headers" :id :headers :default {}
+    :assoc-fn #(update %1 %2 conj (str/split %3 #"=" 2))]
+   ["-s" "--skip SKIP" "skip executing tests with this skip flag"]
+   ["-r" "--report REPORT" "report file (defaults to target/<test-file-name>-results.xml)"]
+   ["-v" "--verbose" "show HTTP logs"]
+   ["-h" "--help"]])
+
+(defn usage [opts]
+  (->> ["Usage:"
+        "java -jar rester.jar [options] <rester-test-cases>.[csv|xls|yaml]"
+        "or"
+        "lein run -- [options] <rester-test-cases>.[csv|xls:sheet1|yaml]"
+        ""
+        "Options:"
+        (:summary opts)]
+       (str/join \newline )))
 
 (defn -main
   "Executes HTTP requests specified in the argument provided spreadsheet."
   [& args]
-  (when-not (seq args)
-    (println "Usage: \njava -jar rester-0.1.0-beta2.jar <command> <rest-test-cases.csv> [placeholder replacements as :placeholder-name value]
-or
-lein run -m rester.core <rest-test-cases.csv> [placeholder replacements as :placeholder-name value]")
-    (System/exit 1))
-  (run-tests args))
+  (let [opts (cli/parse-opts args cli-options)]
+    (when (or (empty? (:arguments opts)) (:errors opts))
+      (println (or (:errors opts) "Missing test case file"))
+      (println (usage opts))
+      (System/exit 1))
+    (when (-> opts :options :verbose)
+      (println "Parsed Options:")
+      (println (pr-str (:options opts))))
+
+    (doseq [p (-> opts :options :profiles)
+            f (:arguments opts)
+            :let [options (deep-merge (get-in opts [:options :config (keyword p)])
+                                 (-> opts :options (dissoc :config)))
+                  start (System/currentTimeMillis)
+                  _ (log/infof "Executing %s with profile %s : %s" f p (Date.))
+                  results (run-tests f options)]]
+      (log/infof "Completed in %f secs" (/ (- (System/currentTimeMillis) start) 1000.0))
+      ((juxt #(junit-report opts f %) print-test-results) results))))
