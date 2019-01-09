@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+# Ensure this file is executable via `chmod a+x rester`, then place it
+# somewhere on your $PATH, like ~/bin. The rest of rester will be
+# installed upon first run into the ~/.rester/ directory.
+
+[[ -d $HOME/.rester ]] || {
+    echo "Welcome to Rester!"
+    echo "Please wait while I download and install Reter..."
+    LATEST_RELEASE=$(curl -L -s -H 'Accept: application/json' https://github.com/rinconjc/rester/releases/latest)
+    LATEST_VERSION=$(echo $LATEST_RELEASE | sed -e 's/.*"tag_name":"\([^"]*\)".*/\1/')
+    ARTIFACT_URL="https://github.com/rinconjc/rester/releases/download/$LATEST_VERSION/rester.jar"
+    mkdir $HOME/.rester
+    pushd $HOME/.rester
+    curl -o "rester-$LATEST_VERSION.jar" $ARTIFACT_URL
+    ln -sf "rester-$LATEST_VERSION.jar" rester.jar
+
+}

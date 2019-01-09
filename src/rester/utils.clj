@@ -137,7 +137,9 @@
                        (some->> t :exp-headers (#(str->map % #":"))
                                 (vector :headers))]))
       (assoc :options
-             (into (or (some-> t :options not-empty parse-options) {})
+             (into (or (some-> t :options not-empty parse-options
+                               (update :before (fnil str/split "") #"\s*,\s*")
+                               (update :after (fnil str/split "") #"\s*,\s*")) {})
                    [(some->> t :priority not-empty to-int (vector :priority))
                     (some->> t :extractors not-empty (#(str->map % #"\s*=\s*"))
                              (vector :extractors))]))))
