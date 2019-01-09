@@ -45,7 +45,7 @@
        (if-not (empty? (:params req))
          (str (if-not (.contains (:url req) "?") "?") (->> req :params (map #(str/join "=" %)) (#(str/join "&" %))))) " "
        (->> req :headers (map #(str "-H'" (first %) ":" (second %) "' ")) str/join)
-       (if-not (empty? (:payload req)) (str " -d '" (body-to-string (:payload req)) "'"))))
+       (if-not (empty? (:body req)) (str " -d '" (body-to-string (:body req)) "'"))))
 
 (defn print-http-message [req res]
   (let [format-headers (fn [headers]
@@ -53,7 +53,7 @@
         req-str (if (System/getProperty "nocurl")
                   (format "\n%s %s\n%s\nparams:\n%s\npayload:\n%s\n" (:verb req) (:url req)
                           (format-headers (:headers req))
-                          (format-headers (:params req)) (body-to-string (:payload req)))
+                          (format-headers (:params req)) (body-to-string (:body req)))
                   (print-curl-request req))]
 
     (format "\n%s\n--------------\nResponse:\nstatus:%d\n%s\nbody:\n%s"
@@ -348,7 +348,7 @@
                                  :method (:verb t)
                                  :header (for [[k v] (str->map (:headers t) #":" false)]
                                            {:key k :value v})
-                                 :body (:payload t)}
+                                 :body (:body t)}
                        :event (conj (for [[name path] []] ;; (:extractions t)
                                       {:list "test"
                                        :script (format "var resp=JSON.parse(responseBody);
@@ -424,4 +424,4 @@ postman.setEnvironmentVariable(\"%s\", %s);
                   _ (log/infof "Executing %s with profile %s : %s" f p (Date.))
                   results (run-tests f options)]]
       (log/infof "Completed in %f secs" (/ (- (System/currentTimeMillis) start) 1000.0))
-      ((juxt #(junit-report opts f %) print-test-results) results))))
+      ((juxt #(junit-report (:options opts) f %) print-test-results) results))))

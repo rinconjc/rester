@@ -16,7 +16,7 @@
            java.text.SimpleDateFormat
            java.util.Calendar))
 
-(def ^:const fields [:suite :name :url :verb :headers :payload :params :exp-status :exp-body
+(def ^:const fields [:suite :name :url :verb :headers :body :params :exp-status :exp-body
                      :exp-headers :options :extractors :priority])
 
 (def ^:const placeholder-pattern #"\$(\p{Alpha}[^\$]*)\$")
