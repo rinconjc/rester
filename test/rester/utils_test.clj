@@ -57,22 +57,28 @@
 
 (deftest test-rows-to-test-case
   (testing "convert rows to test case"
-    (let [sample-test ["suite1" "test1" "http://api.example.com"
+    (let [test1 ["suite1" "test1" "http://api.example.com"
                        "GET" "Content-Type:application/json" "" "" "200" ""
-                       "Content-Type:application/json" "" "id=$.id" ""]]
+                 "Content-Type:application/json" "" "id=$.id" ""]
+          test2 ["" "test2" "http://api.example.com"
+                 "POST" "Content-Type:application/json" "" "" "200" ""
+                 "Content-Type:application/json" "ignore" "id=$.id" ""]]
       (is (like [{:verb :get :expect {:status 200}
-                  :options {:extractors {"id" "$.id"}}}]
-                (rows->test-cases [sample-test]))))))
+                  :options {:extractors {"id" "$.id"}}}
+                 {:suite "suite1" :verb :post :options {:ignore true}}]
+                (rows->test-cases [test1 test2]))))))
 
 (deftest test-process-tests
   (testing "loading from csv"
     (let [ts (load-tests-from "example/sample-tests.csv" nil)
           {:keys[runnable ignored skipped]} (process-tests ts {})]
-      (is (= 9 (count ts)))
+      (is (= 10 (count ts)))
       (is (= 9 (count runnable)))
-      (is (like {:id 3 :deps #{2}} (some-like {:id 3} runnable)))
-      (is (like {:id 4 :deps #{2 3}} (some-like {:id 4} runnable)))
-      (is (like {:id 8 :deps #{7}} (some-like {:id 8} runnable))))))
+      (is (= 1 (count ignored)))
+      (is (like {:id 2 :ignored true} (some-like {:id 2} ignored)))
+      (is (like {:id 4 :deps #{3}} (some-like {:id 4} runnable)))
+      (is (like {:id 5 :deps #{3 4}} (some-like {:id 5} runnable)))
+      (is (like {:id 9 :deps #{8}} (some-like {:id 9} runnable))))))
 
 (deftest tests-in-yaml-format
   (testing "loading from yaml"

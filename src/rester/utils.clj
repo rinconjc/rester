@@ -138,9 +138,11 @@
                                 (vector :headers))]))
       (assoc :options
              (into (or (some-> t :options not-empty parse-options
-                               (update :before (fnil str/split "") #"\s*,\s*")
-                               (update :after (fnil str/split "") #"\s*,\s*")) {})
-                   [(some->> t :priority not-empty to-int (vector :priority))
+                               (#(merge % (some->>
+                                           (select-keys % [:before :after])
+                                           (map-values (fn[s](str/split s #"\s*,\s*")))))))
+                       {})
+                   [(some->> t :priority ((fnil to-int "0")) (vector :priority))
                     (some->> t :extractors not-empty (#(str->map % #"\s*=\s*"))
                              (vector :extractors))]))))
 
