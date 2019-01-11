@@ -1,0 +1,10 @@
+#!/bin/bash
+[[ -d $HOME/.rester ]] || {
+    echo "Downloading rester..."
+    mkdir $HOME/.rester
+    pushd $HOME/.rester
+    curl -o rester.zip https://github.com/rinconjc/rester/archive/master.zip
+    unzip rester.zip
+    rm rester.zip
+    popd
+}
