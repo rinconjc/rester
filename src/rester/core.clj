@@ -176,7 +176,9 @@
                 delta (verify-response resp test)
                 test (assoc test :time (/ (:request-time resp) 1000.0) :resp resp)]
             (if delta
-              (assoc test :failure delta)
+              (do
+                (log/warnf "Test failure: [%s/%s], reason :%s" (:suite test) (:name test) delta)
+                (assoc test :failure delta))
               (do
                 (swap! opts merge (extract-data resp (-> test :options :extractors)))
                 (assoc test :success true))))
@@ -190,14 +192,15 @@
   (let [result-ch (chan (* n 2))]
     (dotimes [i n]
       (go-loop [[t opts] (<! test-ch)]
-        (when (:before t)
-          (doseq [bt (:before t)]
+        (log/infof "executing test:%s/%s" (:suite t) (:name t))
+        (when-let [pre-tests (get-in t [:options :before])]
+          (doseq [bt pre-tests]
             (try (exec-test-case bt opts)
                  (catch Exception e
                    (log/errorf e "failed executing before test %s..." (:name bt))))))
         (let [r (exec-test-case t opts)]
-          (when (:after t)
-            (doseq [at (:after t)]
+          (when-let [post-tests (get-in t [:options :after])]
+            (doseq [at post-tests]
               (try (exec-test-case at opts)
                    (catch Exception e
                      (log/errorf e "failed executing after test %s..." (:name at))))))
@@ -226,14 +229,17 @@
              (if (:success t)
                (reduce
                 (fn [[nodes zero-degs] a]
-                  (let [nodes (update nodes a update :in-degree dec)]
-                    (if (zero? (:in-degree (nodes a)))
+                  (let [nodes (conj nodes (some-> (nodes a)
+                                                   (update :in-degree dec)
+                                                   ((partial vector a ))))]
+                    (if (some-> (nodes a) :in-degree zero?)
                       [nodes (conj zero-degs (:test (nodes a)))]
                       [nodes zero-degs])))
                 [@nodes []]
                 child-tests)
                [(apply dissoc @nodes child-tests)
                 (some->> child-tests (map (comp :test @nodes))
+                         (filter some?)
                          (map #(assoc % :skipped (format "dependant [%s] failed!" (:name t))))
                          (into []))])]
          (reset! nodes next-nodes)
@@ -260,12 +266,12 @@
                    skipped (when-not (:success r) next-tests)
                    executed (+ executed (count skipped) 1)
                    results (apply conj results r skipped)]
-               (log/infof "Test %d/%d executed" executed num-tests)
+               (log/infof "Test %d/%d executed %s" executed num-tests (str (when skipped (str ", skipping:" (count skipped)))))
                (if runnables
                  (go (doseq [t runnables] (>! exec-ch [t bindings])))
                  (when (and (zero? pending) (< executed num-tests ))
                    (throw (ex-info "failed to complete execution!" {:state tests}))))
-               (if (= executed num-tests)
+               (if (zero? pending)
                  results
                  (recur (<! done-ch) (dec (+ pending (count runnables))) executed results))))))))
 
@@ -304,11 +310,13 @@
   (doseq [[suite {tests :tests}] suites]
     (println suite)
     (doseq [test tests
-            :let [result (some #(if-let [v (% test)] (str % " " v)) [:error :failure :skipped])]]
+            :let [result (some #(if-let [v (% test)] (str % " " v))
+                               [:error :failure :skipped :ignored])]]
       (print (cond
-               (:success test) "\u001B[32m [v] "
-               (:ignored test) "\u001B[32m [_] "
-               :true "\u001B[31m [x] "))
+               (:ignored test) "\u001B[93m [_] "
+               (:success test) "\u001B[32m [\u2713] "
+               (:skipped test) "\u001B[33m [_] "
+               :true "\u001B[31m [\u2717] "))
       (println (:name test) "\t" (or result :success) "\u001B[0m"))))
 
 (defn junit-report [opts src-file {suites :suites}]

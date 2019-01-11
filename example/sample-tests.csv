@@ -1,6 +1,7 @@
 Test Suite,Test Name,Target URL,HTTP VERB,HEADERS,PAYLOAD,PARAMS,EXPECTED STATUS,EXPECTED BODY,EXPECTED HEADERS,REQUEST_OPTIONS,EXTRACTIONS,PRIORITY
 Market data,Invalid path,$baseUrl$/marketx/BTC/AUD/tick,GET,,,,404,,,,,
 ,Valid path,$baseUrl$/market/BTC/AUD/tick,GET,,,,200,"{currency:""AUD"", instrument:""BTC""}",,,,
+,Ignore Test,$baseUrl$/market/BTC/AUD/tick,GET,,,,200,"{currency:""AUD"", instrument:""BTC""}",,ignore,,
 Fake API,Create post,$fakeServer$/posts,POST,Content-Type:application/json,"{userId:10, title:""title1"", body:""test post 1""}",,201,"{id:""#\\d+""}",Content-Type:application/json; charset=utf-8,,postId=$.id,1
 ,Retrieve post,$fakeServer$/posts/$postId$,GET,Content-Type:application/json,,,200,"{title:""foo"", body:""bar"", userId:""7""}",Content-Type:text/html; charset=utf-8,,,2
 ,Updated post,$fakeServer$/posts/$postId$,PUT,Content-Type:application/json,"{title:""foo"", body:""bar"", userId:""7""}",,200,"{id:1,title:""foo"", body:""bar""}",Content-Type:application/json; charset=utf-8,,,3
