@@ -6,7 +6,7 @@
 
 [[ -d $HOME/.rester ]] || {
     echo "Welcome to Rester!"
-    echo "Please wait while I download and install Reter..."
+    echo "Please wait while I download and install Rester..."
     LATEST_RELEASE=$(curl -L -s -H 'Accept: application/json' https://github.com/rinconjc/rester/releases/latest)
     LATEST_VERSION=$(echo $LATEST_RELEASE | sed -e 's/.*"tag_name":"\([^"]*\)".*/\1/')
     ARTIFACT_URL="https://github.com/rinconjc/rester/releases/download/$LATEST_VERSION/rester.jar"
@@ -14,5 +14,7 @@
     pushd $HOME/.rester
     curl -o "rester-$LATEST_VERSION.jar" $ARTIFACT_URL
     ln -sf "rester-$LATEST_VERSION.jar" rester.jar
-
+    popd
 }
+
+java -jar $HOME/.rester/rester.jar $@

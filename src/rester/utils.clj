@@ -11,7 +11,8 @@
              :refer
              [load-workbook read-cell row-seq select-sheet sheet-seq]]
             [rester.specs :as rs :refer [http-verbs]]
-            [yaml.core :as yaml])
+            [yaml.core :as yaml]
+            [clojure.set :as set])
   (:import java.lang.Exception
            java.text.SimpleDateFormat
            java.util.Calendar))
@@ -35,6 +36,7 @@
                   (every? (fn[[k v]] (if (fn? v) (v (get y k)) (like v (get y k)))) x))
     (coll? x) (and (coll? y) (or (and (empty? x) (empty? y))
                                  (and (like (first x) (first y)) (like (rest x) (rest y)))))
+    (fn? x) (x y)
     :else (= x y)))
 
 (defn deep-merge [a b]
@@ -245,11 +247,11 @@
                         (apply concat) (into {}))      ;var->id
         priority-deps (priority-dependencies runnables)
         runnables (for [t runnables]
-                    (-> t (assoc :deps (-> extractors
-                                           (select-keys (:vars t))
-                                           vals
-                                           (concat (priority-deps (-> t :options :priority)))
-                                           set))
+                    (-> t
+                        (merge (->> (select-keys extractors (:vars t))
+                                    vals set (repeat 2)
+                                    (zipmap [:var-deps :deps])))
+                        (update :deps set/union (-> t :options :priority priority-deps set))
                         (update-in [:options :before] (partial map by-name))
                         (update-in [:options :after] (partial map by-name))))
         tests-with-deps (into {} (filter #(when (:deps %) [(:id %) (:deps %)]) runnables))]
