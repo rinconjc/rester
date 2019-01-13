@@ -211,39 +211,42 @@
 (defn children-of [adjs x]
   (concat (adjs x) (distinct (mapcat (partial children-of adjs) (adjs x)))))
 
+(defn mk-adjacents [tests k]
+  (->> tests
+       (mapcat #(for [d (% k)] [d (:id %)]))
+       (reduce #(update %1 (first %2) conj (second %2)) {})))
+
 (defn mk-ordered-iter
   "creates a dependency aware iterator "
   [tests]
-  (let [adjs (->> tests
-                  (mapcat #(for [d (:deps %)] [d (:id %)]))
-                  (reduce #(update %1 (first %2) conj (second %2)) {}))
+  (let [adjs (mk-adjacents tests :deps)
+        var-adjs (mk-adjacents tests :var-deps)
         nodes (atom
                (into {} (for [t tests]
                           [(:id t) {:test t :in-degree (count (:deps t))}])))]
     (fn
       ([]
-       (->> @nodes (filter #(= 0 (:in-degree (second %)))) (map (comp :test second))))
+       (let [runnables (->> @nodes (filter #(= 0 (:in-degree (second %))))
+                            (map (comp :test second)))]
+         (reset! nodes (apply dissoc @nodes (map :id runnables)))
+         [runnables nil]))
       ([t]
-       (let [child-tests (if (:success t) (adjs (:id t)) (children-of adjs (:id t)))
-             [next-nodes next-ts]
-             (if (:success t)
-               (reduce
-                (fn [[nodes zero-degs] a]
-                  (let [nodes (conj nodes (some-> (nodes a)
-                                                   (update :in-degree dec)
-                                                   ((partial vector a ))))]
-                    (if (some-> (nodes a) :in-degree zero?)
-                      [nodes (conj zero-degs (:test (nodes a)))]
-                      [nodes zero-degs])))
-                [@nodes []]
-                child-tests)
-               [(apply dissoc @nodes child-tests)
-                (some->> child-tests (map (comp :test @nodes))
-                         (filter some?)
-                         (map #(assoc % :skipped (format "dependant [%s] failed!" (:name t))))
-                         (into []))])]
-         (reset! nodes next-nodes)
-         next-ts)))))
+       (let [skipped (when-not (:success t) (children-of var-adjs (:id t)))
+             new-nodes (apply dissoc @nodes skipped)
+             successors (->> (conj skipped (:id t))
+                             (mapcat adjs)
+                             (map new-nodes)
+                             (filter some?)
+                             (map #(update % :in-degree dec)))
+             runnables (->> successors
+                            (filter #(-> % :in-degree zero?))
+                            (map :test))
+             skipped (map (comp #(assoc % :skipped (format "dependant test %s failed" (:name t)))
+                                :test @nodes) skipped)
+             new-nodes (reduce #(assoc %1 (:id %2) %2) new-nodes successors)
+             new-nodes (apply dissoc new-nodes (map :id runnables))]
+         (reset! nodes new-nodes)
+         [runnables skipped])))))
 
 (defn exec-in-order [tests opts]
   (when-not (empty? tests)
@@ -251,7 +254,7 @@
           exec-ch (chan (* concurrency 2))
           done-ch (start-executors exec-ch concurrency)
           next-tests-fn (mk-ordered-iter tests)
-          runnables (next-tests-fn)
+          [runnables _] (next-tests-fn)
           bindings (atom (:bindings opts))
           num-tests (count tests)]
       (when (empty? runnables)
@@ -261,13 +264,12 @@
                      pending (dec (count runnables))
                      executed 0
                      results []]
-             (let [next-tests (not-empty (next-tests-fn r))
-                   runnables (when (:success r) next-tests)
-                   skipped (when-not (:success r) next-tests)
+             (let [[runnables skipped] (next-tests-fn r)
                    executed (+ executed (count skipped) 1)
                    results (apply conj results r skipped)]
-               (log/infof "Test %d/%d executed %s" executed num-tests (str (when skipped (str ", skipping:" (count skipped)))))
-               (if runnables
+               (log/infof "Test %d/%d executed %s" executed num-tests
+                          (str (when skipped (str ", skipping:" (count skipped)))))
+               (if (not-empty runnables)
                  (go (doseq [t runnables] (>! exec-ch [t bindings])))
                  (when (and (zero? pending) (< executed num-tests ))
                    (throw (ex-info "failed to complete execution!" {:state tests}))))
@@ -393,31 +395,36 @@ postman.setEnvironmentVariable(\"%s\", %s);
    ["-t" "--concurrency CONCURRENCY" "concurrency level (max number of concurrent test execution)"
     :parse-fn #(Integer/parseInt %)
     :validate [#(< 0 % 1000) "Must be a number between 1 and 1000"] ]
-   ["-b" "--binding BINDING" "variable binding" :id :bindings :default {}
+   ["-b" "--binding BINDING" "variable binding as \"SOME_VAR=SOME VALUE\"" :id :bindings :default {}
     :assoc-fn #(update %1 %2 conj (str/split %3 #"=" 2))]
-   ["-H" "--header HEADER" "common headers" :id :headers :default {}
+   ["-H" "--header HEADER" "common headers as \"SOME_HEADER=SOME VALUE\"" :id :headers :default {}
     :assoc-fn #(update %1 %2 conj (str/split %3 #"=" 2))]
    ["-s" "--skip SKIP" "skip executing tests with this skip flag"]
    ["-r" "--report REPORT" "report file (defaults to target/<test-file-name>-results.xml)"]
-   ["-v" "--verbose" "show HTTP logs"]
+   ["-v" "--verbose" "output HTTP logs"]
    ["-h" "--help"]])
 
 (defn usage [opts]
   (->> ["Usage:"
-        "java -jar rester.jar [options] <rester-test-cases>.[csv|xls|yaml]"
-        "or"
-        "lein run -- [options] <rester-test-cases>.[csv|xls:sheet1|yaml]"
+        "rester [options] <rester-test-cases>.[csv|xls:sheetName|yaml]"
         ""
         "Options:"
         (:summary opts)]
        (str/join \newline )))
 
 (defn -main
-  "Executes HTTP requests specified in the argument provided spreadsheet."
+  "Executes HTTP(S) requests specified in the argument provided spreadsheet."
   [& args]
   (let [opts (cli/parse-opts args cli-options)]
-    (when (or (empty? (:arguments opts)) (:errors opts))
-      (println (or (:errors opts) "Missing test case file"))
+    (when (-> opts :options :help)
+      (println (usage opts))
+      (System/exit 0))
+    (when (:errors opts)
+      (println (:errors opts))
+      (println (usage opts))
+      (System/exit 1))
+    (when (empty? (:arguments opts))
+      (println "Missing test case file")
       (println (usage opts))
       (System/exit 1))
     (when (-> opts :options :verbose)
@@ -427,7 +434,7 @@ postman.setEnvironmentVariable(\"%s\", %s);
     (doseq [p (-> opts :options :profiles)
             f (:arguments opts)
             :let [options (deep-merge (get-in opts [:options :config (keyword p)])
-                                 (-> opts :options (dissoc :config)))
+                                      (-> opts :options (dissoc :config)))
                   start (System/currentTimeMillis)
                   _ (log/infof "Executing %s with profile %s : %s" f p (Date.))
                   results (run-tests f options)]]
