@@ -233,17 +233,14 @@
       ([t]
        (let [skipped (when-not (:success t) (children-of var-adjs (:id t)))
              new-nodes (apply dissoc @nodes skipped)
-             successors (->> (conj skipped (:id t))
+             new-nodes (->> (conj skipped (:id t))
                              (mapcat adjs)
-                             (reduce #(if (new-nodes %2) (update %1 %2 (fnil inc 0)) %1) {})
-                             (merge-with #(update %1 :in-degree - %2) new-nodes)
-                             vals)
-             runnables (->> successors
-                            (filter #(-> % :in-degree zero?))
-                            (map :test))
+                             (reduce #(if (%1 %2) (update-in %1 [%2 :in-degree] dec) %1) new-nodes))
+             runnables (->> new-nodes
+                            (filter (comp zero? :in-degree second))
+                            (map (comp :test second)))
              skipped (map (comp #(assoc % :skipped (format "dependant test \"%s\" failed" (:name t)))
                                 :test @nodes) skipped)
-             new-nodes (reduce #(assoc %1 (:id %2) %2) new-nodes successors)
              new-nodes (apply dissoc new-nodes (map :id runnables))]
          (reset! nodes new-nodes)
          [runnables skipped])))))
@@ -262,22 +259,22 @@
       (go (doseq [t runnables] (>! exec-ch [t bindings])))
       (<!! (go-loop [r (<! done-ch)
                      pending (dec (count runnables))
-                     executed 0
+                     completed 1
                      results []]
              (let [[runnables skipped] (next-tests-fn r)
-                   executed (+ 1 executed (count skipped))
+                   completed (+ completed (count skipped))
                    pending (+ pending (count runnables))
                    results (apply conj results r skipped)]
-               (log/infof "Test %d/%d executed(%d) %s" executed num-tests (:id r)
+               (log/infof "Test %d/%d executed(%d) %s" completed num-tests (:id r)
                           (str (when (not-empty skipped) (str ", skipping:" (count skipped)))))
-               (if (not-empty runnables)
-                 (go (doseq [t runnables] (>! exec-ch [t bindings])))
-                 (when (and (zero? pending) (< executed num-tests ))
+               (if (empty? runnables)
+                 (when (and (zero? pending) (< completed num-tests))
                    (throw (ex-info "failed to complete execution!"
-                                   {:pending (- num-tests executed)}))))
+                                   {:pending (- num-tests completed)})))
+                 (go (doseq [t runnables] (>! exec-ch [t bindings]))))
                (if (zero? pending)
                  results
-                 (recur (<! done-ch) (dec pending) executed results))))))))
+                 (recur (<! done-ch) (dec pending) (inc completed) results))))))))
 
 (defn exec-tests [tests opts]
   (let [test-groups (process-tests tests opts)
