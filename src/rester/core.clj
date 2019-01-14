@@ -106,8 +106,8 @@
 
 (def conn-mgr (delay (make-reusable-conn-manager {:insecure? true})))
 
-(defn mk-request [{:keys[name url verb headers params body] :as  req}]
-  (log/info "executing:" name ":" verb url)
+(defn mk-request [{:keys[id name url verb headers params body] :as  req}]
+  (log/infof "executing:%s: %s" name verb url)
   (-> (try
         (client/request {:url url
                          :method verb
@@ -226,7 +226,7 @@
                           [(:id t) {:test t :in-degree (count (:deps t))}])))]
     (fn
       ([]
-       (let [runnables (->> @nodes (filter #(= 0 (:in-degree (second %))))
+       (let [runnables (->> @nodes (filter #(zero? (:in-degree (second %))))
                             (map (comp :test second)))]
          (reset! nodes (apply dissoc @nodes (map :id runnables)))
          [runnables nil]))
@@ -235,13 +235,13 @@
              new-nodes (apply dissoc @nodes skipped)
              successors (->> (conj skipped (:id t))
                              (mapcat adjs)
-                             (map new-nodes)
-                             (filter some?)
-                             (map #(update % :in-degree dec)))
+                             (reduce #(if (new-nodes %2) (update %1 %2 (fnil inc 0)) %1) {})
+                             (merge-with #(update %1 :in-degree - %2) new-nodes)
+                             vals)
              runnables (->> successors
                             (filter #(-> % :in-degree zero?))
                             (map :test))
-             skipped (map (comp #(assoc % :skipped (format "dependant test %s failed" (:name t)))
+             skipped (map (comp #(assoc % :skipped (format "dependant test \"%s\" failed" (:name t)))
                                 :test @nodes) skipped)
              new-nodes (reduce #(assoc %1 (:id %2) %2) new-nodes successors)
              new-nodes (apply dissoc new-nodes (map :id runnables))]
@@ -265,17 +265,19 @@
                      executed 0
                      results []]
              (let [[runnables skipped] (next-tests-fn r)
-                   executed (+ executed (count skipped) 1)
+                   executed (+ 1 executed (count skipped))
+                   pending (+ pending (count runnables))
                    results (apply conj results r skipped)]
-               (log/infof "Test %d/%d executed %s" executed num-tests
-                          (str (when skipped (str ", skipping:" (count skipped)))))
+               (log/infof "Test %d/%d executed(%d) %s" executed num-tests (:id r)
+                          (str (when (not-empty skipped) (str ", skipping:" (count skipped)))))
                (if (not-empty runnables)
                  (go (doseq [t runnables] (>! exec-ch [t bindings])))
                  (when (and (zero? pending) (< executed num-tests ))
-                   (throw (ex-info "failed to complete execution!" {:state tests}))))
+                   (throw (ex-info "failed to complete execution!"
+                                   {:pending (- num-tests executed)}))))
                (if (zero? pending)
                  results
-                 (recur (<! done-ch) (dec (+ pending (count runnables))) executed results))))))))
+                 (recur (<! done-ch) (dec pending) executed results))))))))
 
 (defn exec-tests [tests opts]
   (let [test-groups (process-tests tests opts)
