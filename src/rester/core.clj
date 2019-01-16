@@ -107,7 +107,7 @@
 (def conn-mgr (delay (make-reusable-conn-manager {:insecure? true})))
 
 (defn mk-request [{:keys[id name url verb headers params body] :as  req}]
-  (log/infof "executing:%s: %s" name verb url)
+  (log/infof "executing:%s:%s %s" name verb url)
   (-> (try
         (client/request {:url url
                          :method verb
