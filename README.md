@@ -115,6 +115,9 @@ For EDN, it uses an equivalent structure to YAML.
 * **Dependent tests**. The test cases are run in parallel (configurable # of threads, 4 threads by default), and in no specific order, unless for dependent tests. Dependencies are determined implicitly from the *placeholder* sets of every test and the exported *variable extractions* of other tests. E.g In the above example *Update user* depends on *create a user* because the former uses the placeholder *createdUserId*, which is defined as extracted variable in the *create a user* test case.
 * **Date expressions**. Expressions like $today$ or $today+1year-2weeks$ can be specified as placeholders. Currently, *now*,*today* and *tomorrow* are supported as dynamic dates. The expressions can use any of min, mins, hour, hours, day, days, week, weeks, month, months, year, years.
 * **Regex support**. The expected headers and expected body, can include regex expressions using a *#* prefix. E.g. {id:"#\\d+"}
+* **Priority**. Assigning priorities to test cases allows sequencing their execution. Tests with lower priority will be executed before tests with higher priority. This is another way of defining dependencies without using variable-extraction and placeholders.
+* **before** and **after**. These options allow specifying tests that should be executed before, and/or after the current test. They should have the following format: before=test-name-1,test-name2
+* **skip** This is another option that allows skipping the execution of the current test, if the skip value matches the skip option specified in the command line.
 
 ## Usage
 
