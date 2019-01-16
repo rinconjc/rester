@@ -394,7 +394,7 @@ postman.setEnvironmentVariable(\"%s\", %s);
    ["-t" "--concurrency CONCURRENCY" "concurrency level (max number of concurrent test execution)"
     :parse-fn #(Integer/parseInt %)
     :validate [#(< 0 % 1000) "Must be a number between 1 and 1000"] ]
-   ["-b" "--binding BINDING" "variable binding as \"SOME_VAR=SOME VALUE\"" :id :bindings :default {}
+   ["-b" "--binding BINDING" "placeholder value as \"SOME_VAR=SOME VALUE\"" :id :bindings :default {}
     :assoc-fn #(update %1 %2 conj (str/split %3 #"=" 2))]
    ["-H" "--header HEADER" "common headers as \"SOME_HEADER=SOME VALUE\"" :id :headers :default {}
     :assoc-fn #(update %1 %2 conj (str/split %3 #"=" 2))]
