@@ -9,7 +9,7 @@
  {"Create Post"
   {:post "$fakeServer$/posts" :headers {"content-Type" "application/json"}
    :body "{userId:10, title:\"title1\", body:\"test post1\"}"
-   :expect {:status 201 :body "{id: \"#\\d+\"}"
+   :expect {:status 201 :body "{id: \"#\\\\d+\"}"
             :headers {"Content-Type" "application/json; charset=utf-8"}}}
   "Retrieve Post"
   {:get "$fakeServer$/posts/$postId$" :headers {"Content-Type" "application/json"}
