@@ -1,9 +1,8 @@
 (ns rester.utils
-  (:require [cheshire.core :as json]
-            [cheshire.factory :as factory]
-            [clojure.data.csv :as csv]
+  (:require [clojure.data.csv :as csv]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.set :refer [union]]
+            [clojure.set :as set :refer [union]]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [clojure.tools.logging :as log]
@@ -11,9 +10,9 @@
              :refer
              [load-workbook read-cell row-seq select-sheet sheet-seq]]
             [rester.specs :as rs :refer [http-verbs]]
-            [yaml.core :as yaml]
-            [clojure.set :as set])
-  (:import java.lang.Exception
+            [yaml.core :as yaml])
+  (:import java.io.PushbackReader
+           java.lang.Exception
            java.text.SimpleDateFormat
            java.util.Calendar))
 
@@ -172,7 +171,9 @@
     (cond
       (str/ends-with? file ".csv") :csv
       (str/ends-with? file ".xlsx") :excel
-      (str/ends-with? file ".yaml") :yaml)))
+      (str/ends-with? file ".yaml") :yaml
+      (str/ends-with? file ".edn") :edn
+      :else (throw (ex-info "file type not supported." {})))))
 
 (defmethod load-tests-from :excel [file sheet]
   (let [wk-book (load-workbook file)
@@ -191,6 +192,13 @@
 
 (defmethod load-tests-from :yaml [file _]
   (from-yaml file))
+
+(defmethod load-tests-from :edn [file _]
+  (->> (edn/read (PushbackReader. (io/reader file)))
+       (mapcat (fn[[suite tests]]
+                 (map (fn[[name* test]]
+                        (assoc test :suite suite :name name*)) tests)))
+       (map-indexed #(to-test-case (assoc %2 :id %1)))))
 
 (defn parse-vars [s]
   (when s (set (map second (re-seq placeholder-pattern s)))))
