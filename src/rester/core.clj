@@ -355,7 +355,7 @@
                       {:name (:test t)
                        :request {:url (:url t)
                                  :method (:verb t)
-                                 :header (for [[k v] (str->map (:headers t) #":" false)]
+                                 :header (for [[k v] (str->map (:headers t) #":")]
                                            {:key k :value v})
                                  :body (:body t)}
                        :event (conj (for [[name path] []] ;; (:extractions t)
