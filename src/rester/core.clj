@@ -192,7 +192,6 @@
   (let [result-ch (chan (* n 2))]
     (dotimes [i n]
       (go-loop [[t opts] (<! test-ch)]
-        (log/infof "executing test:%s/%s" (:suite t) (:name t))
         (when-let [pre-tests (get-in t [:options :before])]
           (doseq [bt pre-tests]
             (try (exec-test-case bt opts)
@@ -243,6 +242,7 @@
                                 :test @nodes) skipped)
              new-nodes (apply dissoc new-nodes (map :id runnables))]
          (reset! nodes new-nodes)
+         ;; (log/infof "nodes: %s runnables:%s" (keys new-nodes) (map :id runnables))
          [runnables skipped])))))
 
 (defn exec-in-order [tests opts]
