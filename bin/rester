@@ -4,7 +4,7 @@
 # somewhere on your $PATH, like ~/bin. The rest of rester will be
 # installed upon first run into the ~/.rester/ directory.
 
-[[ -f $HOME/.rester/rester.jar || $1 == update ]] || {
+[[ -f $HOME/.rester/rester.jar && $1 != update ]] || {
     echo "Welcome to Rester!"
     echo "Please wait while I download and install Rester..."
     LATEST_RELEASE=$(curl -L -s -H 'Accept: application/json' https://github.com/rinconjc/rester/releases/latest)
