@@ -6,17 +6,17 @@
 
 [[ -f $HOME/.rester/rester.jar && $1 != update ]] || {
     echo "Welcome to Rester!"
-    echo "Please wait while I download and install Rester..."
     LATEST_RELEASE=$(curl -L -s -H 'Accept: application/json' https://github.com/rinconjc/rester/releases/latest)
     LATEST_VERSION=$(echo $LATEST_RELEASE | sed -e 's/.*"tag_name":"\([^"]*\)".*/\1/')
     ARTIFACT_URL="https://github.com/rinconjc/rester/releases/download/$LATEST_VERSION/rester.jar"
     [[ -d $HOME/.rester ]] || mkdir $HOME/.rester
-    pushd $HOME/.rester
+    pushd $HOME/.rester >/dev/null
     [[ -f "rester-$LATEST_VERSION.jar" ]] || {
+        echo "Please wait while I download and install Rester..."
         curl -Lo "rester-$LATEST_VERSION.jar" $ARTIFACT_URL
     }
     ln -sf "rester-$LATEST_VERSION.jar" rester.jar
-    popd
+    popd >/dev/null
 }
 
 if [[ $1 == update ]]; then
