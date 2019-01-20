@@ -86,17 +86,17 @@
                            (log/error "missing argument:" (second %)) "")))
     s))
 
-(defn str->map
-  ([s sep] (str->map s sep false))
-  ([s sep include-empty]
-   (if-not (str/blank? s)
-     (let [[sep1 sep] (if (vector? sep) sep [#"\s*,\s*" sep])]
-       (->> (str/split s sep1)
-            (map #(let [[k v] (str/split % sep 2)
-                        v (or v (log/warnf "missing key or value in %s" s))]
-                    [k v]))
-            (filter #(or include-empty (not (str/blank? (second %)))))
-            (into {}))))))
+(defn str->map [s sep & {:keys[include-empty grouped]}]
+  (when-not (str/blank? s)
+    (let [[sep1 sep] (if (vector? sep) sep [#"\s*,\s*" sep])
+          pairs (->> (str/split s sep1)
+                     (map #(let [[k v] (str/split % sep 2)
+                                 v (or v (log/warnf "missing key or value in %s" s))]
+                             [k v]))
+                     (filter #(or include-empty (not (str/blank? (second %))))))]
+      (if grouped
+        (->> pairs (group-by first) (map-values #(map second %)))
+        (into {} pairs)))))
 
 (defn to-test-case
   "convert yaml/json to test-case format"
@@ -130,12 +130,12 @@
   (-> t
       (dissoc :exp-status :exp-body :exp-headers :extractors)
       (update :verb (comp keyword str/lower-case))
-      (update :headers str->map #":")
-      (update :params str->map [#"&|(\s*,\s*)" #"\s*=\s*"] true)
+      (update :headers str->map [#"\s*,\s*(?=[^,]*:)" #":"])
+      (update :params str->map [#"&|(\s*,\s*)" #"\s*=\s*"] :include-empty true :grouped true)
       (assoc :expect
              (into {} [[:status (some-> (:exp-status t) Double/parseDouble .intValue)]
                        (some->> t :exp-body not-empty (vector :body))
-                       (some->> t :exp-headers (#(str->map % #":"))
+                       (some->> t :exp-headers (#(str->map % [#"\s*,\s*(?=[^,]*:)" #":"]))
                                 (vector :headers))]))
       (assoc :options
              (into (or (some-> t :options not-empty parse-options
