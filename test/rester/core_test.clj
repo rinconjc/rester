@@ -53,10 +53,10 @@
           test4 (assoc test1 :id 4 :name "test4" :deps #{3 2} :var-deps #{3})
           test5 (assoc test1 :id 5 :name "test5" :deps #{4 1 2})
           it-fn (mk-ordered-iter [test1 test2 test3 test4 test5])]
-      (is (= [[test1 test2] nil] (it-fn)))
+      (is (= [test1 test2] (first (it-fn))))
       (is (empty? (first (it-fn (assoc test2 :success true)))))
       (is (= [test3] (first (it-fn (assoc test1 :success true)))))
-      (is (like [[test5] [{:id 4 :skipped some?}]]
+      (is (like [[test5] [{:id 4 :skipped some?}] map?]
                 (it-fn (assoc test3 :failed true)))))))
 
 (deftest test-prepare-test
