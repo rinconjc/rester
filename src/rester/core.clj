@@ -194,15 +194,11 @@
       (go-loop [[t opts] (<! test-ch)]
         (when-let [pre-tests (get-in t [:options :before])]
           (doseq [bt pre-tests]
-            (try (exec-test-case bt opts)
-                 (catch Exception e
-                   (log/errorf e "failed executing before test %s..." (:name bt))))))
+            (exec-test-case bt opts)))
         (let [r (exec-test-case t opts)]
           (when-let [post-tests (get-in t [:options :after])]
             (doseq [at post-tests]
-              (try (exec-test-case at opts)
-                   (catch Exception e
-                     (log/errorf e "failed executing after test %s..." (:name at))))))
+              (exec-test-case at opts)))
           (>! result-ch r))
         (recur (<! test-ch))))
     result-ch))
@@ -228,22 +224,22 @@
        (let [runnables (->> @nodes (filter #(zero? (:in-degree (second %))))
                             (map (comp :test second)))]
          (reset! nodes (apply dissoc @nodes (map :id runnables)))
-         [runnables nil]))
+         [runnables nil @nodes]))
       ([t]
        (let [skipped (when-not (:success t) (children-of var-adjs (:id t)))
              new-nodes (apply dissoc @nodes skipped)
              new-nodes (->> (conj skipped (:id t))
-                             (mapcat adjs)
-                             (reduce #(if (%1 %2) (update-in %1 [%2 :in-degree] dec) %1) new-nodes))
+                            (mapcat adjs)
+                            (reduce #(if (%1 %2) (update-in %1 [%2 :in-degree] dec) %1) new-nodes))
              runnables (->> new-nodes
                             (filter (comp zero? :in-degree second))
                             (map (comp :test second)))
-             skipped (map (comp #(assoc % :skipped (format "dependant test \"%s\" failed" (:name t)))
+             skipped (map (comp #(assoc % :skipped (format "dependent test failed: \"%s\"" (:name t)))
                                 :test @nodes) skipped)
              new-nodes (apply dissoc new-nodes (map :id runnables))]
          (reset! nodes new-nodes)
          ;; (log/infof "nodes: %s runnables:%s" (keys new-nodes) (map :id runnables))
-         [runnables skipped])))))
+         [runnables skipped @nodes])))))
 
 (defn exec-in-order [tests opts]
   (when-not (empty? tests)
@@ -251,7 +247,7 @@
           exec-ch (chan (* concurrency 2))
           done-ch (start-executors exec-ch concurrency)
           next-tests-fn (mk-ordered-iter tests)
-          [runnables _] (next-tests-fn)
+          [runnables] (next-tests-fn)
           bindings (atom (:bindings opts))
           num-tests (count tests)]
       (when (empty? runnables)
@@ -261,20 +257,21 @@
                      pending (dec (count runnables))
                      completed 1
                      results []]
-             (let [[runnables skipped] (next-tests-fn r)
+             (let [[runnables skipped remaining] (next-tests-fn r)
                    completed (+ completed (count skipped))
                    pending (+ pending (count runnables))
                    results (apply conj results r skipped)]
-               (log/infof "Test %d/%d executed(%d) %s" completed num-tests (:id r)
-                          (str (when (not-empty skipped) (str ", skipping:" (count skipped)))))
-               (if (empty? runnables)
-                 (when (and (zero? pending) (< completed num-tests))
-                   (throw (ex-info "failed to complete execution!"
-                                   {:pending (- num-tests completed)})))
-                 (go (doseq [t runnables] (>! exec-ch [t bindings]))))
+               (log/infof "Test %d/%d executed(%d) pending(%d) %s" completed num-tests (:id r)
+                          pending (str (when (not-empty skipped) (str ", skipping:" (count skipped)))))
                (if (zero? pending)
-                 results
-                 (recur (<! done-ch) (dec pending) (inc completed) results))))))))
+                 (if (< completed num-tests)
+                   (do (log/fatalf "failed to complete execution....\nlast-test:%s\npending-tests:%s"
+                                   (select-keys r [:id :name]) (- num-tests completed))
+                       (concat results (map :test (vals remaining))))
+                   results)
+                 (do
+                   (doseq [t runnables] (go (>! exec-ch [t bindings])))
+                   (recur (<! done-ch) (dec pending) (inc completed) results)))))))))
 
 (defn exec-tests [tests opts]
   (let [test-groups (process-tests tests opts)
