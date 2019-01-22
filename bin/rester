@@ -14,8 +14,8 @@
     [[ -f "rester-$LATEST_VERSION.jar" ]] || {
         echo "Please wait while I download and install Rester..."
         curl -Lo "rester-$LATEST_VERSION.jar" $ARTIFACT_URL
+        ln -sf "rester-$LATEST_VERSION.jar" rester.jar
     }
-    ln -sf "rester-$LATEST_VERSION.jar" rester.jar
     popd >/dev/null
 }
 
