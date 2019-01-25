@@ -80,11 +80,12 @@
              [(keyword (str/lower-case key)) (or value true)])))
 
 (defn replace-opts [s opts]
-  (if (string? s)
+  (cond (string? s)
     (str/replace s placeholder-pattern
                  #(str (or (opts (second %) (parse-date-exp (second %)))
                            (log/error "missing argument:" (second %)) "")))
-    s))
+    (sequential? s) (map #(replace-opts % opts) s)
+    :else s))
 
 (defn str->map [s sep & {:keys[include-empty grouped]}]
   (when-not (str/blank? s)
@@ -210,11 +211,11 @@
        (map parse-vars)
        (apply union)))
 
-(defn cyclic?
-  ([deps x] (cyclic? deps x #{}))
+(defn find-cycle
+  ([deps x] (find-cycle deps x #{}))
   ([deps x visited]
-   (if (visited x) x
-       (some #(cyclic? deps % (conj visited x)) (deps x)))))
+   (if (visited x) visited
+       (some #(find-cycle deps % (conj visited x)) (deps x)))))
 
 (defn priority-dependencies
   "return map of priority to precedents. e.g. priority 1 depends on tests [3 4 5]"
@@ -262,10 +263,11 @@
                         (update :deps set/union (-> t :options :priority priority-deps set))
                         (update-in [:options :before] (partial map by-name))
                         (update-in [:options :after] (partial map by-name))))
-        tests-with-deps (into {} (filter #(when (:deps %) [(:id %) (:deps %)]) runnables))]
+        tests-with-deps (reduce #(if (:deps %2) (conj %1 [(:id %2) (:deps %2)]) %1) {} runnables)]
 
-    (when-let [invalid-test (some #(if (cyclic? tests-with-deps (:id %)) %) runnables)]
-      (throw (Exception. (format "cyclic dependency in test %s" (:name invalid-test)))))
+    (when-let [deps (some #(find-cycle tests-with-deps (:id %)) runnables)]
+      (throw (Exception. (format "cyclic dependency between tests:\n%s"
+                                 (->> runnables (filter #(deps (:id %))) (map :name) (str/join "\n"))))))
     {:runnable runnables
      :ignored (filter :ignored tests)
      :skipped (filter :skipped tests)}))

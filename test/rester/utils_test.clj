@@ -2,7 +2,7 @@
   (:require [clojure.test :refer :all]
             [rester.utils
              :refer
-             [cyclic?
+             [find-cycle
               like
               load-tests-from
               parse-date-exp
@@ -26,11 +26,11 @@
 
 (deftest test-cyclic?
   (testing "no cycles"
-    (is (nil? (cyclic? {:a [:b :c] :b [:c]} :a)))
-    (is (nil? (cyclic? {:a [:a]} :b))))
+    (is (nil? (find-cycle {:a [:b :c] :b [:c]} :a)))
+    (is (nil? (find-cycle {:a [:a]} :b))))
   (testing "cycles"
-    (is (= :a (cyclic? {:a [:a]} :a)))
-    (is (= :b (cyclic? {:a [:b :c] :b [:d] :d [:f] :f [:b]} :a)))))
+    (is (= #{:a} (find-cycle {:a [:a]} :a)))
+    (is (= #{:b :d :f :a} (find-cycle {:a [:b :c] :b [:d] :d [:f] :f [:b]} :a)))))
 
 (deftest test-date-exps
   (testing "simple date names"
