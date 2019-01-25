@@ -107,7 +107,7 @@
 (def conn-mgr (delay (make-reusable-conn-manager {:insecure? true})))
 
 (defn mk-request [{:keys[id name url verb headers params body] :as  req}]
-  (log/infof "executing:%s:%s %s" name verb url)
+  (log/infof "executing(%s):%s:%s %s" id name verb url)
   (-> (try
         (client/request {:url url
                          :method verb
@@ -204,7 +204,7 @@
     result-ch))
 
 (defn children-of [adjs x]
-  (concat (adjs x) (distinct (mapcat (partial children-of adjs) (adjs x)))))
+  (distinct (concat (adjs x) (mapcat (partial children-of adjs) (adjs x)))))
 
 (defn mk-adjacents [tests k]
   (->> tests
@@ -261,13 +261,12 @@
                    completed (+ completed (count skipped))
                    pending (+ pending (count runnables))
                    results (apply conj results r skipped)]
-               (log/infof "Test %d/%d executed(%d) pending(%d) %s" completed num-tests (:id r)
-                          pending (str (when (not-empty skipped) (str ", skipping:" (count skipped)))))
+               (log/infof "Test %d/%d executed" completed num-tests)
                (if (zero? pending)
                  (if (< completed num-tests)
                    (do (log/fatalf "failed to complete execution....\nlast-test:%s\npending-tests:%s"
                                    (select-keys r [:id :name]) (- num-tests completed))
-                       (concat results (map :test (vals remaining))))
+                       (concat results (map (comp #(assoc % :failure "not executed!") :test) (vals remaining))))
                    results)
                  (do
                    (doseq [t runnables] (go (>! exec-ch [t bindings])))
@@ -427,12 +426,16 @@ postman.setEnvironmentVariable(\"%s\", %s);
       (println "Parsed Options:")
       (println (pr-str (:options opts))))
 
-    (doseq [p (-> opts :options :profiles)
-            f (:arguments opts)
-            :let [options (deep-merge (get-in opts [:options :config (keyword p)])
-                                      (-> opts :options (dissoc :config)))
-                  start (System/currentTimeMillis)
-                  _ (log/infof "Executing %s with profile %s : %s" f p (Date.))
-                  results (run-tests f options)]]
-      (log/infof "Completed in %f secs" (/ (- (System/currentTimeMillis) start) 1000.0))
-      ((juxt #(junit-report (:options opts) f %) print-test-results) results))))
+    (try
+      (doseq [p (-> opts :options :profiles)
+             f (:arguments opts)
+             :let [options (deep-merge (get-in opts [:options :config (keyword p)])
+                                       (-> opts :options (dissoc :config)))
+                   start (System/currentTimeMillis)
+                   _ (log/infof "Executing %s with profile %s : %s" f p (Date.))
+                   results (run-tests f options)]]
+       (log/infof "Completed in %f secs" (/ (- (System/currentTimeMillis) start) 1000.0))
+       ((juxt #(junit-report (:options opts) f %) print-test-results) results))
+      (catch Exception e
+        (log/fatalf e "Failed executing tests!")
+        (System/exit 1)))))
