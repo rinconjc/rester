@@ -22,5 +22,5 @@
 if [[ $1 == update ]]; then
     echo "Rester is up-to-date!"
 else
-    java -jar $HOME/.rester/rester.jar "$@"
+    java $JAVA_OPTS -jar $HOME/.rester/rester.jar "$@"
 fi
