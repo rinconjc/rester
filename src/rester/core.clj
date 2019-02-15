@@ -41,9 +41,10 @@
         :else "(binary)"))
 
 (defn print-curl-request [req]
-  (str "curl -v -X" (-> req :verb name str/upper-case) " " (:url req)
+  (str "curl -v -X" (-> req :verb name str/upper-case) " '" (:url req)
        (if-not (empty? (:params req))
-         (str (if-not (.contains (:url req) "?") "?") (->> req :params (map #(str/join "=" %)) (#(str/join "&" %))))) " "
+         (str (if-not (.contains (:url req) "?") "?")
+              (client/generate-query-string (:params req)))) "' "
        (->> req :headers (map #(str "-H'" (first %) ":" (second %) "' ")) str/join)
        (if-not (empty? (:body req)) (str " -d '" (body-to-string (:body req)) "'"))))
 
