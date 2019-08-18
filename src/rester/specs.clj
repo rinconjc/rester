@@ -21,7 +21,7 @@
 (s/def ::before ::names)
 (s/def ::after ::names)
 ;; (s/def ::body (s/or :raw ::raw-body :json ::json-body :form ::form-body))
-(s/def ::body ::raw-body)               ;raw-body only for now
+(s/def ::body any?)               ;raw-body only for now
 (s/def ::expect (s/keys :req-un [::status] :opt-un [::headers ::body]))
 (s/def ::options (s/keys :opt-un [::priority ::extractors ::parse-body ::ignore
                                   ::skip ::before ::after]))

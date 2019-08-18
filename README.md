@@ -44,7 +44,7 @@ For YAML, it also uses the same fields as in the above CSV format, but follows t
 ``` yaml
 Auth Tests:
   Access token request: &auth_request !!ignore
-    POST: https://api.example.com/auth?grant_type=client_credentials
+    post: https://api.example.com/auth?grant_type=client_credentials
     headers:
       Content-Type: application/json
     expect:

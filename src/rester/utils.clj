@@ -105,12 +105,14 @@
   (if-let [[verb url] (some #(some->> (params %) (conj [%])) http-verbs)]
     (let [data (-> params
                    (assoc :verb verb :url url)
-                   (dissoc verb)
+                   (dissoc verb :priority :extract :ignore :skip)
                    (update :headers (partial map-keys name))
                    (update-in [:expect :headers] (partial map-keys name))
-                   (update-in [:options :extractors] (partial map-keys name)))
+                   (assoc :options (-> params (select-keys [:priority :ignore :skip :before :after :parse-body])))
+                   (assoc-in [:options :extractors] (map-keys name (:extract params))))
           parsed (s/conform ::rs/test-case data)]
       (when (= parsed ::s/invalid)
+        (log/warn "invalid test case:" (s/explain-data ::rs/test-case data))
         (throw (ex-info (format "invalid test case: %s" (:name data))
                         {:error (s/explain-data ::rs/test-case data)})))
       parsed)

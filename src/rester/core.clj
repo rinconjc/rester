@@ -4,6 +4,8 @@
             [cheshire.factory :as factory]
             [clj-http.client :as client]
             [clj-http.conn-mgr :refer [make-reusable-conn-manager]]
+            [clj-http.cookies :as cookies]
+            [clj-http.core :as http]
             clojure.core
             [clojure.core.async :as async :refer [<! <!! >! chan go go-loop]]
             [clojure.data.xml :refer [emit-str indent parse-str sexp-as-element]]
@@ -126,8 +128,9 @@
 (defn extract-data [{:keys [status body headers] :as resp} extractions]
   (into {} (for [[name path] extractions]
              (try
-               (let [result (if (.startsWith path "$")
-                              (at-path path body)
+               (let [result (cond
+                              (.startsWith path "$") (at-path path body)
+                              (.startsWith path "#") (re-find (re-pattern path) body)
                               (at-path (str "$." path) resp))]
                  (log/info "extracted:" name "=" result)
                  [name result])
@@ -143,7 +146,8 @@
            (if (diff* (str/trim value) (headers header))
              (str "header " header " was " (headers header) " expected " value))) exp-headers)
    (when-let [ldiff (if exp-body (diff* exp-body body))]
-     (log/error "failed matching body. expected:" exp-body " got:" (body-to-string body))
+     (log/error "failed matching body. expected:" exp-body " got:"
+                (-> body body-to-string (str/replace #"^(.{47})(.+)$" "$1...")))
      (->> ldiff (#(if (instance? Element %)
                     (emit-str %)
                     (json/generate-string %)))
@@ -160,7 +164,7 @@
           (update :params replace-values opts)
           (update :body
                   #(-> % (replace-opts opts)
-                       ((if (:dont_parse_payload options) identity json->clj))))
+                       ((if (or  (:dont_parse_payload options) (false? (:parse-body options))) identity json->clj))))
           (update-in [:expect :body]
                      #(some-> % not-empty
                               (replace-opts opts)
@@ -376,10 +380,11 @@ postman.setEnvironmentVariable(\"%s\", %s);
 
 (defn run-tests [file opts]
   (let [[tests-file work-sheet] (str/split file #":" 2)]
-    (-> tests-file
-        (load-tests-from work-sheet)
-        (exec-tests opts)
-        (summarise-results))))
+    (binding [http/*cookie-store* (when (:use-cookies opts) (cookies/cookie-store))]
+      (-> tests-file
+          (load-tests-from work-sheet)
+          (exec-tests opts)
+          (summarise-results)))))
 
 (def cli-options
   [["-c" "--config CONFIG" "configuration file"
@@ -397,6 +402,7 @@ postman.setEnvironmentVariable(\"%s\", %s);
     :assoc-fn #(update %1 %2 conj (str/split %3 #"=" 2))]
    ["-s" "--skip SKIP" "skip executing tests with this skip flag"]
    ["-r" "--report REPORT" "report file (defaults to target/<test-file-name>-results.xml)"]
+   ["-k" "--use-cookies" "Save and send cookies automatically"]
    ["-v" "--verbose" "output HTTP logs"]
    ["-h" "--help"]])
 

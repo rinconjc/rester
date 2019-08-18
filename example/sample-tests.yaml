@@ -22,8 +22,7 @@ Fake API:
         {id:"#\\d+"}
       headers:
         Content-Type: application/json; charset=utf-8
-    options:
-      extractors:
+      extract:
         postId: $.id
   Retrieve Post:
     get: $fakeServer$/posts/$postId$
