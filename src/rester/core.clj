@@ -131,7 +131,7 @@
                (let [result (cond
                               (.startsWith path "$") (at-path path body)
                               (.startsWith path "#") (re-find (re-pattern path) body)
-                              (at-path (str "$." path) resp))]
+                              true (at-path (str "$." path) resp))]
                  (log/info "extracted:" name "=" result)
                  [name result])
                (catch Exception e
