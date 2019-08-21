@@ -80,10 +80,10 @@
              [(keyword (str/lower-case key)) (or value true)])))
 
 (defn replace-opts [s opts]
-  (cond (string? s)
-    (str/replace s placeholder-pattern
-                 #(str (or (opts (second %) (parse-date-exp (second %)))
-                           (log/error "missing argument:" (second %)) "")))
+  (cond
+    (string? s) (str/replace s placeholder-pattern
+                             #(str (or (replace-opts (opts (second %) (parse-date-exp (second %))) opts)
+                                       (log/error "missing argument:" (second %)) "")))
     (sequential? s) (map #(replace-opts % opts) s)
     :else s))
 

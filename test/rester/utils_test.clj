@@ -1,16 +1,6 @@
 (ns rester.utils-test
   (:require [clojure.test :refer :all]
-            [rester.utils
-             :refer
-             [find-cycle
-              like
-              load-tests-from
-              parse-date-exp
-              parse-options
-              process-tests
-              rows->test-cases
-              str->map
-              to-test-case]])
+            [rester.utils :refer :all])
   (:import clojure.lang.ExceptionInfo
            java.text.SimpleDateFormat
            java.util.Date))
@@ -86,3 +76,8 @@
           {:keys[runnable ignored skipped]} (process-tests ts {})]
       (is (= 4 (count ts)))
       (is (= 4 (count runnable))))))
+
+(deftest test-variable-expansion
+  (testing "expanding vars"
+    (is (= "var is 42" (replace-opts "var is $x$" {"x" 42})))
+    (is (= "answer to what's life? is 42" (replace-opts "answer to $question$" {"question" "what's life? is $life$" "life" 42})))))
