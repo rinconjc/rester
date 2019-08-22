@@ -125,13 +125,20 @@
           (.getData e)))
       (#(update % :body coerce-payload (get-in % [:headers "Content-Type"])))))
 
+(defn piped-json-path [path data]
+  (loop [[path & paths] (str/split path #"\|")
+         data data]
+    (if path
+      (recur paths (at-path (if (str/starts-with? path "$") path (str "$" path)) data))
+      data)))
+
 (defn extract-data [{:keys [status body headers] :as resp} extractions]
   (into {} (for [[name path] extractions]
              (try
                (let [result (cond
-                              (.startsWith path "$") (at-path path body)
+                              (.startsWith path "$") (piped-json-path path body)
                               (.startsWith path "#") (re-find (re-pattern path) body)
-                              true (at-path (str "$." path) resp))]
+                              true (piped-json-path (str "$." path) resp))]
                  (log/info "extracted:" name "=" result)
                  [name result])
                (catch Exception e
