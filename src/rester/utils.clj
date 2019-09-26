@@ -50,7 +50,7 @@
 (defn- to-int [s]
   (try
     (if (empty? s) 0
-        (Integer/parseInt s))
+        (int (Double/parseDouble s)))
     (catch Exception e 0)))
 
 (defn- eval-date-exp [cal [num name]]
@@ -130,25 +130,29 @@
        (map-indexed #(to-test-case (assoc %2 :id %1)))))
 
 (defn- format-test [t]
-  (-> t
-      (dissoc :exp-status :exp-body :exp-headers :extractors)
-      (update :verb (comp keyword str/lower-case))
-      (update :headers str->map [#"\s*,\s*(?=[^,]*:)" #":"])
-      (update :params str->map [#"&|(\s*,\s*)" #"\s*=\s*"] :include-empty true :grouped true)
-      (assoc :expect
-             (into {} [[:status (some-> (:exp-status t) Double/parseDouble .intValue)]
-                       (some->> t :exp-body not-empty (vector :body))
-                       (some->> t :exp-headers (#(str->map % [#"\s*,\s*(?=[^,]*:)" #":"]))
-                                (vector :headers))]))
-      (assoc :options
-             (into (or (some-> t :options not-empty parse-options
-                               (#(merge % (some->>
-                                           (select-keys % [:before :after])
-                                           (map-values (fn[s](str/split s #"\s*,\s*")))))))
-                       {})
-                   [(some->> t :priority ((fnil to-int "0")) (vector :priority))
-                    (some->> t :extractors not-empty (#(str->map % #"\s*=\s*"))
-                             (vector :extractors))]))))
+  (try
+    (-> t
+        (dissoc :exp-status :exp-body :exp-headers :extractors)
+        (update :verb (comp keyword str/lower-case))
+        (update :headers str->map [#"\s*,\s*(?=[^,]*:)" #":"])
+        (update :params str->map [#"&|(\s*,\s*)" #"\s*=\s*"] :include-empty true :grouped true)
+        (assoc :expect
+               (into {} [[:status (some-> (:exp-status t) Double/parseDouble .intValue)]
+                         (some->> t :exp-body not-empty (vector :body))
+                         (some->> t :exp-headers (#(str->map % [#"\s*,\s*(?=[^,]*:)" #":"]))
+                                  (vector :headers))]))
+        (assoc :options
+               (into (or (some-> t :options not-empty parse-options
+                                 (#(merge % (some->>
+                                             (select-keys % [:before :after])
+                                             (map-values (fn[s](str/split s #"\s*,\s*")))))))
+                         {})
+                     [(some->> t :priority ((fnil to-int "0")) (vector :priority))
+                      (some->> t :extractors not-empty (#(str->map % #"\s*=\s*"))
+                               (vector :extractors))])))
+    (catch Exception e
+      (log/error e "failed parsing test:" t)
+      (throw (ex-info (str "failed parsing test:" t) {:test t})))))
 
 (defn rows->test-cases
   "converts rows into test-cases"
@@ -185,7 +189,7 @@
                    :else (-> wk-book sheet-seq first))]
     (into [] (->> wk-sheet row-seq
                   (map #(map (fn[i] (if-let [c (.getCell % i)] (str (read-cell c)) ""))
-                             (range (count fields))))
+                             (range (inc (count fields)))))
                   rest
                   rows->test-cases))))
 
