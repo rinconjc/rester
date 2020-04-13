@@ -60,7 +60,7 @@
 
 (deftest test-process-tests
   (testing "loading from csv"
-    (let [ts (load-tests-from "example/sample-tests.csv" nil)
+    (let [ts (load-tests-from "example/sample-tests.csv")
           {:keys[runnable ignored skipped]} (process-tests ts {})]
       (is (= 10 (count ts)))
       (is (= 9 (count runnable)))
@@ -72,7 +72,7 @@
 
 (deftest tests-in-yaml-format
   (testing "loading from yaml"
-    (let [ts (load-tests-from "example/sample-tests.yaml" nil)
+    (let [ts (load-tests-from "example/sample-tests.yaml")
           {:keys[runnable ignored skipped]} (process-tests ts {})]
       (is (= 4 (count ts)))
       (is (= 4 (count runnable))))))

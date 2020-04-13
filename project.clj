@@ -19,7 +19,7 @@
                  [org.clojure/tools.cli "0.4.1"]
                  ;; [org.clojure/core.specs.alpha "0.2.44"]
                  ]
-  :main ^:skip-aot rester.core
+  :main rester.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}
              :dev {:dependencies [[org.clojure/test.check "0.10.0-alpha3"]]}}

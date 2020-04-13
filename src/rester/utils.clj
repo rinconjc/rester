@@ -174,15 +174,17 @@
 
 (defmulti load-tests-from
   "Load test cases from the given file"
-  (fn [file _]
-    (cond
-      (str/ends-with? file ".csv") :csv
-      (str/ends-with? file ".xlsx") :excel
-      (str/ends-with? file ".yaml") :yaml
-      (str/ends-with? file ".edn") :edn
-      :else (throw (ex-info "file type not supported." {})))))
+  (fn [file-name opts]
+    (println "opts..." opts)
+    (or (:type opts)
+        (cond
+          (str/ends-with? file-name ".csv") :csv
+          (str/ends-with? file-name ".xlsx") :excel
+          (str/ends-with? file-name ".yaml") :yaml
+          (str/ends-with? file-name ".edn") :edn
+          :else (throw (ex-info "file type not supported." {:file file-name}))))))
 
-(defmethod load-tests-from :excel [file sheet]
+(defmethod load-tests-from :excel [file {sheet :sheet}]
   (let [wk-book (load-workbook file)
         wk-sheet (cond
                    (string? sheet) (select-sheet sheet wk-book)
