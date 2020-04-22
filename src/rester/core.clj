@@ -138,6 +138,7 @@
                (let [result (cond
                               (.startsWith path "$") (piped-json-path path body)
                               (.startsWith path "#") (re-find (re-pattern path) body)
+                              (.startsWith path "header.") (headers (str/replace-first path "header." ""))
                               true (piped-json-path (str "$." path) resp))]
                  (log/info "extracted:" name "=" result)
                  [name result])
