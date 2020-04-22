@@ -42,7 +42,9 @@
 
 (deftest test-extract-data
   (testing "simple json path"
-    (is (= {"id" 100} (extract-data {:body {:id 100 "name" "blah"}} {"id" "$.id"})))))
+    (is (= {"id" 100} (extract-data {:body {:id 100 "name" "blah"}} {"id" "$.id"}))))
+  (testing "extract headers"
+    (is (= {"x" "1234"} (extract-data {:body {} :headers {"header 123" "1234"}} {"x" "header.header 123"})))))
 
 (deftest test-ordered-iterator
   (testing "test ordered iterator"
