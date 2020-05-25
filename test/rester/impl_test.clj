@@ -1,8 +1,10 @@
 (ns rester.impl-test
   (:require [clojure.data.xml :refer [parse-str sexp-as-element]]
             [clojure.test :refer :all]
-            [rester.impl :refer [diff* extract-data mk-ordered-iter prepare-test]]
-            [rester.utils :refer [like]]))
+            [rester.impl :refer :all]
+            [rester.utils :refer [like]])
+  (:import java.text.SimpleDateFormat
+           java.util.Date))
 
 (deftest diff-test
   (testing "diff scalars"
@@ -69,3 +71,17 @@
                  :params {"search" "Pikachu"}
                  :expect {:body {:status "OK" :id "100"}}}
                 (prepare-test test1 {"name" "Pikachu" "accessToken" "1234" "path" "test" "id" 100}))))))
+
+(deftest test-date-exps
+  (testing "simple date names"
+    (let [df (SimpleDateFormat. "yyyy-MM-dd")
+          today (.format df (Date.))]
+      (is (= today (parse-date-exp "now")))
+      (is (= today (parse-date-exp "today")))
+      (is (= (parse-date-exp "tomorrow") (parse-date-exp "today+1day")))
+      (is (= (parse-date-exp "today") (parse-date-exp "today +2days -2days"))))))
+
+(deftest test-variable-expansion
+  (testing "expanding vars"
+    (is (= "var is 42" (replace-opts "var is $x$" {"x" 42})))
+    (is (= "answer to what's life? is 42" (replace-opts "answer to $question$" {"question" "what's life? is $life$" "life" 42})))))

@@ -7,10 +7,11 @@
             [clojure.tools.logging :as log]
             [rester.impl
              :refer
-             [exec-in-order junit-report print-test-results summarise-results]]
+             [exec-in-order load-config junit-report print-test-results summarise-results]]
             [rester.utils :as utils
              :refer
-             [deep-merge load-config process-tests]])
+             [deep-merge process-tests]]
+            [rester.loader :as loader])
   (:import java.io.File
            java.lang.Integer
            java.util.Date))
@@ -21,7 +22,7 @@
     (apply concat executed (-> test-groups (dissoc :runnable) vals))))
 
 (defn load-tests [file opts]
-  (utils/load-tests-from file opts))
+  (loader/load-tests-from file opts))
 
 (defn run-tests [file opts]
   (let [[tests-file work-sheet] (str/split file #":" 2)]

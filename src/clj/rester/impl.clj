@@ -10,9 +10,57 @@
             [clojure.string :as str]
             [clojure.tools.logging :as log]
             [json-path :refer [at-path]]
-            [rester.utils :refer [replace-opts str->map]])
+            [yaml.core :as yaml]
+            [clojure.spec.alpha :as s]
+            [rester.specs :as rs]
+            [rester.utils :as utils :refer [str->map map-keys map-values]]
+            [ajax.util :as u]
+            [rester.utils :as ru])
   (:import [clojure.data.xml CData Element]
-           clojure.lang.ExceptionInfo))
+           java.text.SimpleDateFormat
+           clojure.lang.ExceptionInfo
+           java.util.Calendar
+           java.lang.Exception))
+
+(def ^:const date-operand-pattern #"\s*(\+|-)\s*(\d+)\s*(\p{Alpha}+)")
+(def ^:const date-exp-pattern #"(\p{Alpha}+)((\s*(\+|-)\s*\d+\s*\p{Alpha}+)*)(:(.+))?")
+(def ^:const date-fields {"days" Calendar/DATE "day" Calendar/DATE "week" Calendar/WEEK_OF_YEAR
+                          "weeks" Calendar/WEEK_OF_YEAR "year" Calendar/YEAR "years" Calendar/YEAR
+                          "month" Calendar/MONTH "months" Calendar/MONTH
+                          "hour" Calendar/HOUR "hours" Calendar/HOUR
+                          "min" Calendar/MINUTE "mins" Calendar/MINUTE
+                          "sec" Calendar/SECOND "secs" Calendar/SECOND})
+
+(defn- eval-date-exp [cal [num name]]
+  (.add cal (date-fields name Calendar/DATE) num))
+
+(defn- date-from-name [name]
+  (let [cal (Calendar/getInstance)]
+    (case name
+      "now" cal
+      "today" cal
+      "tomorrow" (do (.add cal Calendar/DATE 1) cal)
+      nil)))
+
+
+(defn parse-date-exp [s]
+  (when-let [[_ name operands _ _ _ fmt] (re-matches date-exp-pattern s)]
+    (when-let [cal (date-from-name name)]
+      (let [operations (for [[_ op n name] (re-seq date-operand-pattern operands)]
+                         [(* (if (= op "+") 1 -1) (Integer/parseInt n)) name])]
+        (doseq [op operations]
+          (eval-date-exp cal op))
+        (.format (SimpleDateFormat. (or fmt "yyyy-MM-dd")) (.getTime cal))))))
+
+(defn replace-opts [s opts]
+  (cond
+    (string? s) (str/replace s utils/placeholder-pattern
+                             #(str (or (replace-opts
+                                        (opts (second %)
+                                              (parse-date-exp (second %))) opts)
+                                       (log/error "missing argument:" (second %)) "")))
+    (sequential? s) (map #(replace-opts % opts) s)
+    :else s))
 
 (defn json->clj [json-str]
   (if-not (str/blank? json-str)
@@ -73,6 +121,7 @@
     payload))
 
 (def conn-mgr (delay (make-reusable-conn-manager {:insecure? true})))
+
 (defn mk-request [{:keys[id name url verb headers params body] :as  req}]
   (log/infof "executing(%s):%s:%s %s" id name verb url)
   (-> (try
@@ -80,13 +129,17 @@
                          :method verb
                          ;; :content-type :json
                          :headers headers
-                         :query-params params
+                         :query-params (ru/grouped params first second)
                          :body (if (string? body) body
                                    (and (seq body) (json/generate-string body)))
                          :insecure? true
                          :connection-manager @conn-mgr})
         (catch ExceptionInfo e
-          (.getData e)))
+          (.getData e))
+        (catch Exception e
+          (.printStackTrace e)
+          ;; (log/error e "request failed" req)
+          ))
       (#(update % :body coerce-payload (get-in % [:headers "Content-Type"])))))
 
 (defn piped-json-path [path data]
@@ -150,7 +203,7 @@
         (try
           (let [resp (mk-request test)
                 delta (verify-response resp test)
-                test (assoc test :time (/ (:request-time resp) 1000.0) :resp resp)]
+                test (assoc test :time (/ (:request-time resp) 1000.0) :response resp)]
             (if delta
               (do
                 (log/warnf "Test failure: [%s/%s], reason :%s" (:suite test) (:name test) delta)
@@ -224,7 +277,7 @@
           done-ch (start-executors exec-ch concurrency)
           next-tests-fn (mk-ordered-iter tests)
           [runnables] (next-tests-fn)
-          bindings (atom (:bindings opts))
+          bindings (atom (or (:bindings opts) {}))
           num-tests (count tests)]
       (when (empty? runnables)
         (throw (ex-info "No tests ready for execution. Review dependencies" {})))
@@ -319,7 +372,7 @@
                 (for [[name {tests :tests {:keys[ignored total failure error skipped]} :summary}] suites]
                   [:testsuite {:name name :errors error :tests total :failures failure}
                    (for [test tests
-                         :let [req-log (delay [:-cdata (print-http-message test (:resp test))])]]
+                         :let [req-log (delay [:-cdata (print-http-message test (:response test))])]]
                      [:testcase {:name (:name test) :classname src-file :time (:time test)}
                       (condp test nil
                         :error :>> #(vector :error {:message %} @req-log)
@@ -352,3 +405,11 @@ postman.setEnvironmentVariable(\"%s\", %s);
 " name (jsonpath->js path))})
                                     {:listen "test"
                                      :script (format "tests[\"Status code is %1$s\"] = responseCode.code === %1$s;" (:exp-status t))})})})}))
+
+(defn load-config [file]
+  (let [config (->> file yaml/from-file
+                    (map-values #(-> % (update :bindings (partial map-keys name))
+                                     (update :headers (partial map-keys name)))))]
+    (if (s/valid? ::rs/config config)
+      config
+      (throw (ex-info "Invalid configuration format" :error (s/explain ::rs/config config))))))

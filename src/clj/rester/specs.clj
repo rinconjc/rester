@@ -2,7 +2,7 @@
   (:require [clojure.spec.alpha :as s]))
 
 (def http-verbs #{:get :post :put :delete :patch :options} )
-(s/def ::verb http-verbs)
+(s/def ::verb (s/and keyword? http-verbs))
 (s/def ::verb-str (into #{} (map name http-verbs)))
 (s/def ::headers (s/nilable (s/map-of string? string?)))
 (s/def ::json-body (s/or :array seq? :object map?))
@@ -20,6 +20,7 @@
 (s/def ::names (s/coll-of string?))
 (s/def ::before ::names)
 (s/def ::after ::names)
+(s/def ::params (s/nilable (s/coll-of (s/tuple string? any?))))
 ;; (s/def ::body (s/or :raw ::raw-body :json ::json-body :form ::form-body))
 (s/def ::body any?)               ;raw-body only for now
 (s/def ::expect (s/keys :req-un [::status] :opt-un [::headers ::body]))
