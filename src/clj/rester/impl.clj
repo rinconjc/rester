@@ -14,7 +14,6 @@
             [clojure.spec.alpha :as s]
             [rester.specs :as rs]
             [rester.utils :as utils :refer [str->map map-keys map-values]]
-            [ajax.util :as u]
             [rester.utils :as ru])
   (:import [clojure.data.xml CData Element]
            java.text.SimpleDateFormat
@@ -135,11 +134,7 @@
                          :insecure? true
                          :connection-manager @conn-mgr})
         (catch ExceptionInfo e
-          (.getData e))
-        (catch Exception e
-          (.printStackTrace e)
-          ;; (log/error e "request failed" req)
-          ))
+          (.getData e)))
       (#(update % :body coerce-payload (get-in % [:headers "Content-Type"])))))
 
 (defn piped-json-path [path data]

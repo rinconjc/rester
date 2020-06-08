@@ -1,5 +1,6 @@
 (ns rester.specs
-  (:require [clojure.spec.alpha :as s]))
+  (:require #?(:clj [clojure.spec.alpha :as s]
+               :cljs [cljs.spec.alpha :as s])))
 
 (def http-verbs #{:get :post :put :delete :patch :options} )
 (s/def ::verb (s/and keyword? http-verbs))
@@ -27,7 +28,7 @@
 (s/def ::options (s/keys :opt-un [::priority ::extractors ::parse-body ::ignore
                                   ::skip ::before ::after]))
 
-(s/def ::test-case (s/keys :req-un [::suite ::name ::verb ::url ::expect]
+(s/def ::test-case (s/keys :req-un [::id ::suite ::name ::verb ::url ::expect]
                            :opt-un [::body ::headers ::options ::params]))
 
 ;; (s/def ::test-case-row
