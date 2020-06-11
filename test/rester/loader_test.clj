@@ -13,7 +13,7 @@
 
 (deftest test-to-test-case
   (testing "convert to test case"
-    (let [min-sample {:suite "suit1" :name "test1"
+    (let [min-sample {:id 1 :suite "suit1" :name "test1"
                       :post "https://api.example.com/" :expect {:status 200}}]
       (is (= :post (:verb (to-test-case min-sample))))
       (is (= :post (:verb (to-test-case (assoc min-sample
