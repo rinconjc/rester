@@ -10,6 +10,16 @@
   #?(:clj (clog/warnf msg more)
      :cljs (js/console.log msg more)))
 
+(defn try-some [x f & [g & more]]
+  (try
+    (f x)
+    (catch #?(:clj Exception
+              :cljs js/Error) e
+      (log "failed applying" f "to" x " due to:" e)
+      (if (fn? g)
+        (apply try-some x g more)
+        (throw e)))))
+
 (defn grouped [xs key-fn val-fn]
   (reduce #(update %1 (key-fn %2) conj (val-fn %2)) {} xs))
 
@@ -35,10 +45,10 @@
   (when-not (str/blank? s)
     (let [[sep1 sep] (if (vector? sep) sep [#"\s*,\s*" sep])]
       (->> (str/split s sep1)
-                      (map #(let [[k v] (str/split % sep 2)
-                                  v (or v (log "missing key or value in %s" s))]
-                              [k v]))
-                      (filter #(or include-empty (not (str/blank? (second %)))))))))
+           (map #(let [[k v] (str/split % sep 2)
+                       v (or v (log "missing key or value in %s" s))]
+                   [k v]))
+           (filter #(or include-empty (not (str/blank? (second %)))))))))
 
 (defn str->map [s sep & {:keys[grouped] :as opts}]
   (when-let [pairs (apply str->tuples s sep opts)]
@@ -116,7 +126,7 @@
 
     (when-let [deps (some #(find-cycle tests-with-deps (:id %)) runnables)]
       (throw (exception (str "cyclic dependency between tests:\n"
-                                 (->> runnables (filter #(deps (:id %))) (map :name) (str/join "\n"))))))
+                             (->> runnables (filter #(deps (:id %))) (map :name) (str/join "\n"))))))
     {:runnable runnables
      :ignored (filter :ignored tests)
      :skipped (filter :skipped tests)}))

@@ -115,7 +115,7 @@
         payload)
       (catch Exception e
         (let [body-str (body-to-string payload)]
-          (log/error e "failed coercing payload" body-str)
+          (log/error e "failed coercing payload" body-str "content-type" content-type)
           body-str)))
     payload))
 
@@ -183,7 +183,8 @@
           (update :params replace-values opts)
           (update :body
                   #(-> % (replace-opts opts)
-                       ((if (or  (:dont_parse_payload options) (false? (:parse-body options))) identity json->clj))))
+                       ((if (or  (:dont_parse_payload options) (false? (:parse-body options)))
+                          identity (ru/try-some json->clj identity)))))
           (update-in [:expect :body]
                      #(some-> % not-empty
                               (replace-opts opts)
