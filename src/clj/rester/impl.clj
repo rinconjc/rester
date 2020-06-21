@@ -182,9 +182,9 @@
           (update :headers replace-values opts)
           (update :params replace-values opts)
           (update :body
-                  #(-> % (replace-opts opts)
-                       ((if (or  (:dont_parse_payload options) (false? (:parse-body options)))
-                          identity (ru/try-some json->clj identity)))))
+                  #(as-> (replace-opts % opts) body
+                     (if (or  (:dont_parse_payload options) (false? (:parse-body options)))
+                       body (ru/try-some body json->clj identity))))
           (update-in [:expect :body]
                      #(some-> % not-empty
                               (replace-opts opts)
