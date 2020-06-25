@@ -32,6 +32,9 @@
           (exec-tests opts)
           (summarise-results)))))
 
+(defn load-profiles [file]
+  (load-config file))
+
 (def cli-options
   [["-c" "--config CONFIG" "configuration file"
     :validate [#(.exists (File. %)) "config file not found"]
