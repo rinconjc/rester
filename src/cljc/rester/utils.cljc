@@ -5,6 +5,8 @@
             #?(:clj [clojure.tools.logging :as clog])))
 
 (defonce placeholder-pattern #"\$([a-zA-Z][^\$]*)\$")
+(defonce date-exp-pattern #"(now|today|tomorrow)((\s*(\+|-)\s*\d+\s*(day|hour|min|sec|week|month|year)s?)*)(:(.+))?")
+(defonce date-operand-pattern #"\s*(\+|-)\s*(\d+)\s*(day|hour|min|sec|week|month|year)s?")
 
 (defn log [msg & more]
   #?(:clj (clog/warnf msg more)
