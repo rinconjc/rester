@@ -13,16 +13,13 @@
             [yaml.core :as yaml]
             [clojure.spec.alpha :as s]
             [rester.specs :as rs]
-            [rester.utils :as utils :refer [str->map map-keys map-values]]
-            [rester.utils :as ru])
+            [rester.utils :as utils :refer [str->map map-keys map-values]])
   (:import [clojure.data.xml CData Element]
            java.text.SimpleDateFormat
            clojure.lang.ExceptionInfo
            java.util.Calendar
            java.lang.Exception))
 
-(def ^:const date-operand-pattern #"\s*(\+|-)\s*(\d+)\s*(\p{Alpha}+)")
-(def ^:const date-exp-pattern #"(\p{Alpha}+)((\s*(\+|-)\s*\d+\s*\p{Alpha}+)*)(:(.+))?")
 (def ^:const date-fields {"days" Calendar/DATE "day" Calendar/DATE "week" Calendar/WEEK_OF_YEAR
                           "weeks" Calendar/WEEK_OF_YEAR "year" Calendar/YEAR "years" Calendar/YEAR
                           "month" Calendar/MONTH "months" Calendar/MONTH
@@ -43,9 +40,9 @@
 
 
 (defn parse-date-exp [s]
-  (when-let [[_ name operands _ _ _ fmt] (re-matches date-exp-pattern s)]
+  (when-let [[_ name operands _ _ _ _ fmt] (re-matches utils/date-exp-pattern s)]
     (when-let [cal (date-from-name name)]
-      (let [operations (for [[_ op n name] (re-seq date-operand-pattern operands)]
+      (let [operations (for [[_ op n name] (re-seq utils/date-operand-pattern operands)]
                          [(* (if (= op "+") 1 -1) (Integer/parseInt n)) name])]
         (doseq [op operations]
           (eval-date-exp cal op))
@@ -128,7 +125,7 @@
                          :method verb
                          ;; :content-type :json
                          :headers headers
-                         :query-params (ru/grouped params first second)
+                         :query-params (utils/grouped params first second)
                          :body (if (string? body) body
                                    (and (seq body) (json/generate-string body)))
                          :insecure? true
@@ -184,7 +181,7 @@
           (update :body
                   #(as-> (replace-opts % opts) body
                      (if (or  (:dont_parse_payload options) (false? (:parse-body options)))
-                       body (ru/try-some body json->clj identity))))
+                       body (utils/try-some body json->clj identity))))
           (update-in [:expect :body]
                      #(some-> % not-empty
                               (replace-opts opts)
