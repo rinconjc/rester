@@ -5,7 +5,7 @@
 (def http-verbs #{:get :post :put :delete :patch :options} )
 (s/def ::verb (s/and keyword? http-verbs))
 (s/def ::verb-str (into #{} (map name http-verbs)))
-(s/def ::headers (s/nilable (s/map-of string? string?)))
+(s/def ::headers (s/nilable (s/map-of string? any?)))
 (s/def ::json-body (s/or :array seq? :object map?))
 (s/def ::raw-body string?)
 (s/def ::form-body (s/map-of string? string?))
