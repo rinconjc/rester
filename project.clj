@@ -1,6 +1,6 @@
 (defproject rester "0.2.2-SNAPSHOT"
-  :description "FIXME: write description"
-  :url "http://example.com/FIXME"
+  :description "Rester is a REST API integration test tool that executes tests defined in simple data formats such a spreadsheet, CSV, YAML, or EDN."
+  :url "https://github.com/rinconjc/rester"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.10.0"]
