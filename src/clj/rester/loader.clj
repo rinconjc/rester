@@ -136,3 +136,38 @@
                  (map (fn[[name* test]]
                         (assoc test :suite suite :name name*)) tests)))
        (map-indexed #(to-test-case (assoc %2 :id %1)))))
+
+(defmulti exporter identity)
+
+(defn- join-map [ed pd m]
+  (str/join ed (map (partial str/join pd) m)))
+
+(defmethod exporter :csv []
+  (fn [tests writer]
+    (csv/write-csv writer (->> fields (map name) (map str/upper-case)))
+    (loop [prev-suite nil
+           [test & more] tests]
+      (when test
+        (csv/write-csv writer (juxt #(if (= prev-suite (:suite %)) "" (:suite %))) 
+                       :name :url :verb
+                       (comp (partial join-map "," ":") :headers)
+                       :body (comp (partial join-map "&" "=")) 
+                       (comp :status :expect)
+                       (comp :body :expect)
+                       (comp (partial join-map "," ":") :headers :expect)
+                       (comp (partial join-map "," "=") #(dissoc % :extractors :priority) :options)
+                       (comp (partial join-map "\n" "=") :extractors :options)
+                       (comp :priority :options))
+        (recur (:suite test) more)))))
+
+(defmethod exporter :yaml []
+  (fn [tests writer]
+    (spit writer (yaml/generate-string tests {:flow-style :block}) )))
+
+(defmethod exporter :edn []
+  (fn [tests writer]
+    (spit writer (pr-str tests))))
+
+(defn export [tests format writer]
+  (let [exporter (exporter format)]
+    (exporter tests writer)))

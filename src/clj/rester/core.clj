@@ -24,6 +24,8 @@
 (defn load-tests [file opts]
   (loader/load-tests-from file opts))
 
+(def export loader/export)
+
 (defn run-tests [file opts]
   (let [[tests-file work-sheet] (str/split file #":" 2)]
     (binding [http/*cookie-store* (when (:use-cookies opts) (cookies/cookie-store))]
